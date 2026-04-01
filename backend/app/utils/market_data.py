@@ -16,7 +16,7 @@ Symbol resolution:
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,6 @@ def _resolve(symbol: str, exchange: str = "NSE") -> str:
         return f"{s}.BO"
     if ex in ("US", "CRYPTO"):
         return s
-    # Default → NSE
     return f"{s}.NS"
 
 
@@ -39,8 +38,9 @@ def fetch_ltp_batch(
     exchanges: Optional[List[str]] = None,
 ) -> Dict[str, Optional[float]]:
     """
-    Fetch last close price for all symbols in one yfinance call.
-    Returns {original_symbol: float | None}
+    Fetch last traded price for all symbols in one yfinance call.
+    Returns {original_symbol: float | None} — keys are always the
+    original symbols passed in, never the resolved .NS/.BO tickers.
     """
     if not symbols:
         return {}
@@ -48,17 +48,23 @@ def fetch_ltp_batch(
     if exchanges is None:
         exchanges = ["NSE"] * len(symbols)
 
-    # Build forward and reverse maps
+    # Build forward map: original_symbol → yf_ticker
     ticker_map: Dict[str, str] = {
         sym: _resolve(sym, ex)
         for sym, ex in zip(symbols, exchanges)
     }
-    # reverse: yf_ticker → original symbol
-    # If two symbols resolve to same ticker, last wins — acceptable for single-user portfolio
-    reverse_map: Dict[str, str] = {v: k for k, v in ticker_map.items()}
 
+    # Build reverse map: yf_ticker (upper) → original_symbol
+    # Upper-cased to survive any case mutations yfinance applies to column names.
+    reverse_map: Dict[str, str] = {
+        v.upper(): k for k, v in ticker_map.items()
+    }
+
+    # Initialise all symbols to None
     result: Dict[str, Optional[float]] = {sym: None for sym in symbols}
-    unique_tickers: List[str] = list(dict.fromkeys(ticker_map.values()))  # preserve order, dedup
+
+    # Deduplicated list of tickers to request
+    unique_tickers: List[str] = list(dict.fromkeys(ticker_map.values()))
 
     try:
         import yfinance as yf
@@ -79,28 +85,34 @@ def fetch_ltp_batch(
         is_multi = hasattr(data.columns, "levels")  # MultiIndex when >1 ticker
 
         if is_multi:
-            # MultiIndex: level-0 = field ('Close'), level-1 = ticker
             if "Close" not in data.columns.get_level_values(0):
                 logger.warning("'Close' field not in MultiIndex columns")
                 return result
 
             close_df = data["Close"]  # DataFrame: rows=time, cols=ticker
 
+            # Normalise column names to upper-case for safe lookup
+            close_df.columns = [str(c).upper() for c in close_df.columns]
+
             for ticker in unique_tickers:
-                original = reverse_map.get(ticker)
+                ticker_upper = ticker.upper()
+                original = reverse_map.get(ticker_upper)
                 if original is None:
                     continue
-                if ticker not in close_df.columns:
-                    logger.debug("Ticker %s not in close_df columns: %s", ticker, list(close_df.columns))
+                if ticker_upper not in close_df.columns:
+                    logger.debug(
+                        "Ticker %s not in close_df columns: %s",
+                        ticker_upper, list(close_df.columns)
+                    )
                     continue
-                series = close_df[ticker].dropna()
+                series = close_df[ticker_upper].dropna()
                 if series.empty:
-                    logger.debug("Empty close series for %s", ticker)
+                    logger.debug("Empty close series for %s", ticker_upper)
                     continue
                 result[original] = round(float(series.iloc[-1]), 4)
 
         else:
-            # Single ticker: flat DataFrame with 'Close' column
+            # Single-ticker: flat DataFrame with a 'Close' column
             if "Close" not in data.columns:
                 logger.warning("'Close' not in single-ticker columns: %s", list(data.columns))
                 return result
@@ -110,9 +122,9 @@ def fetch_ltp_batch(
                 return result
 
             ltp = round(float(series.iloc[-1]), 4)
-            # Assign to all symbols that resolved to this ticker
+            # Assign to every original symbol that resolved to this ticker
             for ticker in unique_tickers:
-                original = reverse_map.get(ticker)
+                original = reverse_map.get(ticker.upper())
                 if original:
                     result[original] = ltp
 

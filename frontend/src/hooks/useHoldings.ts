@@ -9,33 +9,39 @@ export function useHoldings() {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Track previous LTPs so flash logic can diff on each poll
+  const [ltpReady, setLtpReady] = useState(false);
+
+  // Track previous LTPs per symbol to compute flash direction on each poll
   const prevLtpRef = useRef<Record<string, number | null>>({});
   const [flashMap, setFlashMap] = useState<Record<string, "up" | "down" | null>>({});
 
   const fetch = useCallback(async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const res = await holdingsApi.list();
-      const next = res.data;
 
-      // Compute flash direction per symbol
+      const res = await holdingsApi.list();
+      const next: Holding[] = res.data;
+
+      // Compute per-symbol flash direction by diffing against previous LTP snapshot
       const newFlash: Record<string, "up" | "down" | null> = {};
       next.forEach((h) => {
         const prev = prevLtpRef.current[h.symbol];
         if (prev != null && h.ltp != null) {
-          if (h.ltp > prev) newFlash[h.symbol] = "up";
+          if (h.ltp > prev)      newFlash[h.symbol] = "up";
           else if (h.ltp < prev) newFlash[h.symbol] = "down";
         }
+        // Always update snapshot — including when ltp is null
         prevLtpRef.current[h.symbol] = h.ltp ?? null;
       });
 
       setHoldings(next);
       setError(null);
 
+      // ltpReady = true once at least one holding has a real LTP value
+      setLtpReady(next.some((h) => h.ltp != null));
+
       if (Object.keys(newFlash).length > 0) {
         setFlashMap(newFlash);
-        // Clear flash after 800ms
         setTimeout(() => setFlashMap({}), 800);
       }
     } catch (e: any) {
@@ -45,26 +51,28 @@ export function useHoldings() {
     }
   }, []);
 
-  // Initial load
+  // Initial load (non-silent — shows spinner)
   useEffect(() => {
     fetch(false);
   }, [fetch]);
 
-  // 10-second polling (silent — no loading spinner flicker)
+  // 10-second background poll (silent — no spinner flicker)
   useEffect(() => {
     const id = setInterval(() => fetch(true), POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [fetch]);
 
+  // Aggregate totals — only include LTP-based values when ltp is available
   const totalInvested = holdings.reduce((s, h) => s + h.invested_amount, 0);
-  const totalValue = holdings.reduce((s, h) => s + (h.current_value ?? h.invested_amount), 0);
-  const totalPnl = holdings.reduce((s, h) => s + (h.pnl ?? 0), 0);
-  const totalPnlPct = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
+  const totalValue    = holdings.reduce((s, h) => s + (h.current_value ?? 0), 0);
+  const totalPnl      = holdings.reduce((s, h) => s + (h.pnl ?? 0), 0);
+  const totalPnlPct   = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
 
   return {
     holdings,
     loading,
     error,
+    ltpReady,
     refetch: () => fetch(false),
     flashMap,
     totalInvested,

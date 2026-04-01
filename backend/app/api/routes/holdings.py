@@ -28,9 +28,10 @@ def calc_invested(qty: float, avg: float) -> float:
 
 
 def _enrich(holding: Holding, ltp_map: dict) -> HoldingWithLTP:
+    """Attach runtime market fields. All computed fields are None when LTP unavailable."""
     base = {c.name: getattr(holding, c.name) for c in Holding.__table__.columns}
 
-    # Always look up by the exact symbol stored in the DB (already upper-cased at write time)
+    # Key lookup uses the exact symbol stored in DB (upper-cased at write time)
     ltp: float | None = ltp_map.get(holding.symbol)
 
     current_value: float | None = None
@@ -45,15 +46,10 @@ def _enrich(holding: Holding, ltp_map: dict) -> HoldingWithLTP:
             if holding.invested_amount
             else 0.0
         )
-    else:
-        # Fallback: surface invested value so the frontend never receives null for current_value
-        current_value = holding.invested_amount
-        pnl = 0.0
-        pnl_percent = 0.0
 
     return HoldingWithLTP(
         **base,
-        ltp=ltp,
+        ltp=ltp,                      # explicitly mapped — None when market data unavailable
         current_value=current_value,
         pnl=pnl,
         pnl_percent=pnl_percent,
@@ -74,8 +70,7 @@ async def list_holdings(
     if not holdings:
         return []
 
-    # Pass the exact DB symbols — fetch_ltp_batch guarantees these are the dict keys
-    symbols: List[str]  = [h.symbol   for h in holdings]
+    symbols:   List[str] = [h.symbol   for h in holdings]
     exchanges: List[str] = [h.exchange for h in holdings]
 
     ltp_map = fetch_ltp_batch(symbols, exchanges)
@@ -201,7 +196,10 @@ async def upload_zerodha_csv(
     col_map = {"Instrument": "symbol", "Avg. cost": "average_buy_price", "Qty.": "quantity"}
     missing = [c for c in col_map if c not in df.columns]
     if missing:
-        raise HTTPException(status_code=422, detail=f"Missing columns: {missing}. Found: {list(df.columns)}")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Missing columns: {missing}. Found: {list(df.columns)}",
+        )
 
     df = df.rename(columns=col_map)[["symbol", "average_buy_price", "quantity"]]
     df = df.dropna(subset=["symbol", "average_buy_price", "quantity"])

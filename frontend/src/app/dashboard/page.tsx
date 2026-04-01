@@ -20,6 +20,7 @@ export default function DashboardPage() {
   const {
     holdings, loading, error, refetch, flashMap,
     totalInvested, totalValue, totalPnl, totalPnlPct,
+    ltpReady,
   } = useHoldings();
 
   const [addOpen, setAddOpen] = useState(false);
@@ -73,12 +74,12 @@ export default function DashboardPage() {
         {/* Stats strip */}
         <div className="hidden md:flex items-center gap-4">
           <Stat icon={<Wallet className="w-3.5 h-3.5" />} label="Invested" value={fmtCompact(totalInvested)} />
-          <Stat icon={<BarChart2 className="w-3.5 h-3.5" />} label="Curr Value" value={fmtCompact(totalValue)} />
+          <Stat icon={<BarChart2 className="w-3.5 h-3.5" />} label="Curr Value" value={ltpReady ? fmtCompact(totalValue) : "—"} />
           <Stat
             icon={pnlPositive ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
             label="Total P&L"
-            value={`${pnlPositive ? "+" : ""}${fmtCompact(totalPnl)} (${fmtPct(totalPnlPct)})`}
-            color={pnlPositive ? "text-emerald-400" : "text-rose-400"}
+            value={ltpReady ? `${pnlPositive ? "+" : ""}${fmtCompact(totalPnl)} (${fmtPct(totalPnlPct)})` : "—"}
+            color={ltpReady ? (pnlPositive ? "text-emerald-400" : "text-rose-400") : undefined}
           />
           <Stat icon={<Activity className="w-3.5 h-3.5" />} label="Positions" value={String(holdings.length)} />
         </div>
@@ -131,17 +132,17 @@ export default function DashboardPage() {
             <thead>
               <tr className="border-b border-border bg-card/60 sticky top-0 z-10">
                 {[
-                  { key: "symbol",             label: "Symbol"    },
-                  { key: null,                 label: "Name"      },
-                  { key: "quantity",           label: "Qty",       align: "right" },
-                  { key: "average_buy_price",  label: "Avg Cost",  align: "right" },
-                  { key: null,                 label: "LTP",       align: "right" },
-                  { key: "invested_amount",    label: "Invested",  align: "right" },
-                  { key: null,                 label: "Curr Value",align: "right" },
-                  { key: null,                 label: "P&L",       align: "right" },
-                  { key: null,                 label: "P&L %",     align: "right" },
-                  { key: null,                 label: "Signal",    align: "center" },
-                  { key: null,                 label: "",          align: "right" },
+                  { key: "symbol",            label: "Symbol"     },
+                  { key: null,                label: "Name"       },
+                  { key: "quantity",          label: "Qty",        align: "right" },
+                  { key: "average_buy_price", label: "Avg Cost",   align: "right" },
+                  { key: null,                label: "LTP",        align: "right" },
+                  { key: "invested_amount",   label: "Invested",   align: "right" },
+                  { key: null,                label: "Curr Value", align: "right" },
+                  { key: null,                label: "P&L",        align: "right" },
+                  { key: null,                label: "P&L %",      align: "right" },
+                  { key: null,                label: "Signal",     align: "center" },
+                  { key: null,                label: "",           align: "right" },
                 ].map(({ key, label, align }, i) => (
                   <th
                     key={i}
@@ -196,19 +197,20 @@ export default function DashboardPage() {
                   <td colSpan={3} className="px-3 py-2.5 font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
                     Total · {holdings.length} positions
                   </td>
-                  <td />
-                  <td />
+                  <td /><td />
                   <td className="px-3 py-2.5 text-right font-mono font-semibold text-foreground tabular-nums">
                     {fmtCompact(totalInvested)}
                   </td>
                   <td className="px-3 py-2.5 text-right font-mono font-semibold text-foreground tabular-nums">
-                    {fmtCompact(totalValue)}
+                    {ltpReady ? fmtCompact(totalValue) : "—"}
                   </td>
-                  <td className={cn("px-3 py-2.5 text-right font-mono font-semibold tabular-nums", totalPnl >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                    {totalPnl >= 0 ? "+" : ""}{fmtCompact(totalPnl)}
+                  <td className={cn("px-3 py-2.5 text-right font-mono font-semibold tabular-nums",
+                    ltpReady ? (totalPnl >= 0 ? "text-emerald-400" : "text-rose-400") : "text-muted-foreground/40")}>
+                    {ltpReady ? `${totalPnl >= 0 ? "+" : ""}${fmtCompact(totalPnl)}` : "—"}
                   </td>
-                  <td className={cn("px-3 py-2.5 text-right font-mono font-semibold tabular-nums", totalPnlPct >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                    {fmtPct(totalPnlPct)}
+                  <td className={cn("px-3 py-2.5 text-right font-mono font-semibold tabular-nums",
+                    ltpReady ? (totalPnlPct >= 0 ? "text-emerald-400" : "text-rose-400") : "text-muted-foreground/40")}>
+                    {ltpReady ? fmtPct(totalPnlPct) : "—"}
                   </td>
                   <td colSpan={2} />
                 </tr>
@@ -265,13 +267,15 @@ function HoldingRow({
       <td className="px-3 py-2 text-right font-mono tabular-nums">{fmt(h.quantity, 4)}</td>
 
       {/* Avg Cost */}
-      <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtCurrency(h.average_buy_price, h.exchange)}</td>
+      <td className="px-3 py-2 text-right font-mono tabular-nums">
+        {fmtCurrency(h.average_buy_price, h.exchange)}
+      </td>
 
-      {/* LTP */}
+      {/* LTP — explicit h.ltp read; "Loading..." when null */}
       <td className="px-3 py-2 text-right font-mono tabular-nums">
         {h.ltp != null
           ? <span className="text-foreground font-medium">{fmtCurrency(h.ltp, h.exchange)}</span>
-          : <span className="text-muted-foreground/30 text-[10px]">—</span>
+          : <span className="text-muted-foreground/40 text-[10px] animate-pulse">Loading...</span>
         }
       </td>
 
@@ -284,71 +288,60 @@ function HoldingRow({
       <td className="px-3 py-2 text-right font-mono tabular-nums">
         {h.current_value != null
           ? <span className="text-foreground font-medium">{fmtCurrency(h.current_value, h.exchange)}</span>
-          : <span className="text-muted-foreground/30 text-[10px]">—</span>
+          : <span className="text-muted-foreground/40 text-[10px]">—</span>
         }
       </td>
 
       {/* P&L absolute */}
       <td className="px-3 py-2 text-right font-mono tabular-nums">
-        {h.pnl != null ? (
-          <span className={cn(pnlPositive ? "text-emerald-400" : "text-rose-400")}>
-            {h.pnl >= 0 ? "+" : ""}{fmtCurrency(h.pnl, h.exchange)}
-          </span>
-        ) : <span className="text-muted-foreground/30 text-[10px]">—</span>}
+        {h.pnl != null
+          ? <span className={cn(pnlPositive ? "text-emerald-400" : "text-rose-400")}>
+              {h.pnl >= 0 ? "+" : ""}{fmtCurrency(h.pnl, h.exchange)}
+            </span>
+          : <span className="text-muted-foreground/30 text-[10px]">—</span>
+        }
       </td>
 
       {/* P&L % */}
       <td className="px-3 py-2 text-right font-mono tabular-nums">
-        {h.pnl_percent != null ? (
-          <span className={cn(
-            "inline-flex items-center gap-0.5",
-            pnlPositive ? "text-emerald-400" : "text-rose-400"
-          )}>
-            {pnlPositive
-              ? <TrendingUp className="w-3 h-3" />
-              : <TrendingDown className="w-3 h-3" />
-            }
-            {fmtPct(h.pnl_percent)}
-          </span>
-        ) : <span className="text-muted-foreground/30 text-[10px]">—</span>}
+        {h.pnl_percent != null
+          ? <span className={cn("inline-flex items-center gap-0.5",
+              pnlPositive ? "text-emerald-400" : "text-rose-400")}>
+              {pnlPositive
+                ? <TrendingUp className="w-3 h-3" />
+                : <TrendingDown className="w-3 h-3" />
+              }
+              {fmtPct(h.pnl_percent)}
+            </span>
+          : <span className="text-muted-foreground/30 text-[10px]">—</span>
+        }
       </td>
 
       {/* Signal */}
       <td className="px-3 py-2 text-center">
-        {h.signal ? (
-          <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded px-1.5 py-0.5 text-[10px] font-mono">
-            {h.signal}
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-0.5 text-muted-foreground/30 text-[10px] font-mono">
-            <Cpu className="w-2.5 h-2.5" /><span>—</span>
-          </span>
-        )}
+        {h.signal
+          ? <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded px-1.5 py-0.5 text-[10px] font-mono">
+              {h.signal}
+            </span>
+          : <span className="inline-flex items-center gap-0.5 text-muted-foreground/30 text-[10px] font-mono">
+              <Cpu className="w-2.5 h-2.5" /><span>—</span>
+            </span>
+        }
       </td>
 
       {/* Actions */}
       <td className="px-3 py-2">
         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition">
-          <button
-            onClick={onAddShares}
-            title="Buy more"
-            className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground hover:text-cyan-400 hover:bg-cyan-500/10 transition"
-          >
+          <button onClick={onAddShares} title="Buy more"
+            className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground hover:text-cyan-400 hover:bg-cyan-500/10 transition">
             <PlusCircle className="w-3.5 h-3.5" />
           </button>
-          <button
-            onClick={onSell}
-            title="Sell shares"
-            className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition"
-          >
+          <button onClick={onSell} title="Sell shares"
+            className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition">
             <TrendingDown className="w-3.5 h-3.5" />
           </button>
-          <button
-            onClick={onDelete}
-            disabled={isDeleting}
-            title="Remove position"
-            className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition disabled:opacity-30"
-          >
+          <button onClick={onDelete} disabled={isDeleting} title="Remove position"
+            className="w-6 h-6 rounded flex items-center justify-center text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition disabled:opacity-30">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -357,7 +350,7 @@ function HoldingRow({
   );
 }
 
-// ── Stat chip ──────────────────────────────────────────────────────────────
+// ── Stat chip ─────────────────────────────────────────────────────────────────
 
 function Stat({ icon, label, value, color, dim }: {
   icon: React.ReactNode; label: string; value: string; color?: string; dim?: boolean;
@@ -366,7 +359,8 @@ function Stat({ icon, label, value, color, dim }: {
     <div className="flex items-center gap-2 border-l border-border pl-4">
       <div className="text-muted-foreground">{icon}</div>
       <div>
-        <div className={cn("text-xs font-mono font-medium", color ?? (dim ? "text-muted-foreground/50" : "text-foreground"))}>
+        <div className={cn("text-xs font-mono font-medium",
+          color ?? (dim ? "text-muted-foreground/50" : "text-foreground"))}>
           {value}
         </div>
         <div className="text-[9px] text-muted-foreground uppercase tracking-wider font-mono">{label}</div>

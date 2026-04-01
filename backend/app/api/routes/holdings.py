@@ -30,24 +30,28 @@ def calc_invested(qty: float, avg: float) -> float:
 def _enrich(holding: Holding, ltp_map: dict) -> HoldingWithLTP:
     base = {c.name: getattr(holding, c.name) for c in Holding.__table__.columns}
 
-    # Explicit lookup by exact DB symbol (always upper-cased at write time)
     raw_ltp = ltp_map.get(holding.symbol)
 
-    # Debug sentinel: if fetch pipeline ran but returned None, use 0.001
-    # so frontend shows 0.00 instead of "Loading..." — proves mapping works
-    ltp: float = raw_ltp if raw_ltp is not None else 0.001
-
-    current_value = round(ltp * holding.quantity, 2)
-    pnl = round(current_value - holding.invested_amount, 2)
-    pnl_percent = (
-        round((pnl / holding.invested_amount) * 100, 2)
-        if holding.invested_amount
-        else 0.0
-    )
+    # Strict guard: treat zero, negative, or None as unavailable
+    if raw_ltp and raw_ltp > 0:
+        ltp: Optional[float] = round(float(raw_ltp), 4)
+        current_value: Optional[float] = round(ltp * holding.quantity, 2)
+        pnl: Optional[float] = round(current_value - holding.invested_amount, 2)
+        pnl_percent: Optional[float] = (
+            round((pnl / holding.invested_amount) * 100, 2)
+            if holding.invested_amount
+            else 0.0
+        )
+    else:
+        # LTP unavailable — frontend shows "Loading..." / "—"
+        ltp = None
+        current_value = None
+        pnl = None
+        pnl_percent = None
 
     return HoldingWithLTP(
         **base,
-        ltp=ltp,                   # explicitly passed — never None during debug phase
+        ltp=ltp,
         current_value=current_value,
         pnl=pnl,
         pnl_percent=pnl_percent,
@@ -73,7 +77,6 @@ async def list_holdings(
 
     ltp_map = fetch_ltp_batch(symbols, exchanges)
 
-    # ── Debug print visible in Railway logs ───────────────────────────────
     print(f"[holdings] LTP Map: {ltp_map}")
     fetched = sum(1 for v in ltp_map.values() if v is not None)
     print(f"[holdings] Enrichment: {fetched}/{len(symbols)} real LTPs resolved")

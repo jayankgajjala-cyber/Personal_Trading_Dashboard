@@ -1,14 +1,6 @@
 """
-market_data.py — yfinance batch LTP fetcher for NSE/BSE/US/CRYPTO.
-
-yfinance 0.2.x download() column shapes
-────────────────────────────────────────
-Single ticker  → flat columns: ['Close', 'Open', ...]
-Multi  ticker  → MultiIndex : level-0 = Price field, level-1 = Ticker symbol
-                 e.g. ('Close', 'RELIANCE.NS')
-
-The function always returns {original_symbol: ltp | None} — yf suffixes
-(.NS / .BO) are stripped back via reverse_map so callers never see them.
+market_data.py — yfinance LTP fetcher using yf.Tickers (more reliable than yf.download).
+Logs are print()-based so they appear directly in Railway / Uvicorn stdout.
 """
 
 from __future__ import annotations
@@ -23,13 +15,13 @@ def _resolve(symbol: str, exchange: str = "NSE") -> str:
     """Map a DB symbol + exchange to a yfinance ticker string."""
     s = symbol.strip().upper()
     if "." in s:
-        return s                     # already qualified (.NS / .BO / .L)
+        return s                      # already qualified (.NS / .BO / .L)
     ex = exchange.strip().upper()
     if ex == "BSE":
         return f"{s}.BO"
     if ex in ("US", "CRYPTO"):
-        return s                     # raw: AAPL, BTC-USD
-    return f"{s}.NS"                 # default → NSE
+        return s                      # raw: AAPL, BTC-USD
+    return f"{s}.NS"                  # default → NSE
 
 
 def fetch_ltp_batch(
@@ -37,21 +29,22 @@ def fetch_ltp_batch(
     exchanges: Optional[List[str]] = None,
 ) -> Dict[str, Optional[float]]:
     """
-    Fetch last traded price for every symbol in one yfinance call.
+    Fetch last traded price for every symbol using yf.Tickers.
 
     Returns
     -------
-    dict keyed by the *original* symbol strings passed in (never .NS/.BO).
-    Missing / failed symbols map to None.
+    {original_symbol: float | None}
+    Keys are always the original DB symbols — never the .NS/.BO suffixed tickers.
     """
     if not symbols:
+        print("[market_data] fetch_ltp_batch called with empty symbol list.")
         return {}
 
     if exchanges is None:
         exchanges = ["NSE"] * len(symbols)
 
     # forward  : original_symbol   → yf_ticker
-    # reverse  : yf_ticker.upper() → original_symbol
+    # reverse  : yf_ticker.UPPER() → original_symbol
     ticker_map: Dict[str, str] = {
         sym: _resolve(sym, ex)
         for sym, ex in zip(symbols, exchanges)
@@ -63,93 +56,89 @@ def fetch_ltp_batch(
     result: Dict[str, Optional[float]] = {sym: None for sym in symbols}
     unique_tickers: List[str] = list(dict.fromkeys(ticker_map.values()))
 
+    print(f"[market_data] Symbols requested  : {symbols}")
+    print(f"[market_data] Resolved yf tickers: {unique_tickers}")
+    print(f"[market_data] Reverse map        : {reverse_map}")
+
     try:
         import yfinance as yf
 
-        # ── Primary: yf.download batch ────────────────────────────────────
-        data = yf.download(
-            tickers=" ".join(unique_tickers),
-            period="1d",
-            interval="1m",
-            auto_adjust=True,
-            progress=False,
-            threads=True,
-        )
+        # ── Strategy 1: yf.Tickers batch via fast_info ────────────────────
+        print(f"[market_data] Calling yf.Tickers for: {unique_tickers}")
+        tickers_obj = yf.Tickers(" ".join(unique_tickers))
 
-        if data is not None and not data.empty:
-            cols = data.columns
+        for yf_ticker in unique_tickers:
+            original = reverse_map.get(yf_ticker.upper())
+            if not original:
+                print(f"[market_data] WARNING: no reverse_map entry for '{yf_ticker}'")
+                continue
 
-            # MultiIndex when len(unique_tickers) > 1
-            is_multi = (
-                hasattr(cols, "levels") and len(cols.levels) == 2
-            )
+            try:
+                t = tickers_obj.tickers.get(yf_ticker)
+                if t is None:
+                    print(f"[market_data] yf.Tickers returned None for '{yf_ticker}'")
+                    raise ValueError("Ticker object None")
 
-            if is_multi:
-                # level-0 = field ('Close'), level-1 = ticker
+                fi = t.fast_info
+                # Log the full fast_info dict so we can see what fields are available
                 try:
-                    close_df = data["Close"].copy()
-                    close_df.columns = [str(c).upper() for c in close_df.columns]
+                    fi_dict = {k: getattr(fi, k, None) for k in dir(fi) if not k.startswith("_")}
+                    print(f"[market_data] fast_info fields for {yf_ticker}: {fi_dict}")
+                except Exception:
+                    print(f"[market_data] fast_info introspection failed for {yf_ticker}")
 
-                    for ticker in unique_tickers:
-                        tu = ticker.upper()
-                        original = reverse_map.get(tu)
-                        if not original:
-                            continue
-                        if tu not in close_df.columns:
-                            logger.debug("Ticker %s absent from close_df columns: %s",
-                                         tu, list(close_df.columns))
-                            continue
-                        series = close_df[tu].dropna()
-                        if not series.empty:
-                            result[original] = round(float(series.iloc[-1]), 4)
-
-                except KeyError:
-                    logger.warning("'Close' not found in MultiIndex. columns=%s", list(cols))
-
-            else:
-                # Single-ticker: flat DataFrame — find Close column case-insensitively
-                close_col = next(
-                    (c for c in data.columns if str(c).lower() == "close"), None
+                # Attribute name differs across yfinance patch versions — try all known names
+                price = (
+                    getattr(fi, "last_price",         None) or
+                    getattr(fi, "regularMarketPrice", None) or
+                    getattr(fi, "previous_close",     None)
                 )
-                if close_col is not None:
-                    series = data[close_col].dropna()
-                    if not series.empty:
-                        ltp = round(float(series.iloc[-1]), 4)
-                        for ticker in unique_tickers:
-                            original = reverse_map.get(ticker.upper())
-                            if original:
-                                result[original] = ltp
+                print(f"[market_data] fast_info price for {yf_ticker}: {price}")
+
+                if price is not None and float(price) > 0:
+                    result[original] = round(float(price), 4)
                 else:
-                    logger.warning("'Close' column not found. columns=%s", list(data.columns))
+                    raise ValueError(f"fast_info price invalid: {price}")
 
-        else:
-            logger.warning("yf.download returned empty for: %s", unique_tickers)
+            except Exception as fi_err:
+                print(f"[market_data] fast_info failed for '{yf_ticker}': {fi_err} — trying history()")
 
-        # ── Fallback: Ticker.fast_info for any still-None ─────────────────
-        missing = [sym for sym, v in result.items() if v is None]
-        if missing:
-            logger.info("fast_info fallback for %d symbols: %s", len(missing), missing)
-            for sym in missing:
-                ticker_str = ticker_map[sym]
+                # ── Strategy 2: 1-day 1-minute history per ticker ─────────
                 try:
-                    t = yf.Ticker(ticker_str)
-                    fi = t.fast_info
-                    # Attribute name varies by yfinance version
-                    price = (
-                        getattr(fi, "last_price", None)
-                        or getattr(fi, "regularMarketPrice", None)
-                        or getattr(fi, "previous_close", None)
-                    )
-                    if price is not None:
-                        result[sym] = round(float(price), 4)
-                except Exception as fe:
-                    logger.debug("fast_info failed for %s: %s", ticker_str, fe)
+                    t_single = yf.Ticker(yf_ticker)
+                    hist = t_single.history(period="1d", interval="1m", auto_adjust=True)
+                    print(f"[market_data] history() shape={hist.shape} cols={list(hist.columns)} for {yf_ticker}")
+
+                    if not hist.empty:
+                        # Match 'Close' column case-insensitively (handles tuple cols in newer yf)
+                        close_col = next(
+                            (c for c in hist.columns
+                             if str(c).lower().strip("()' ") == "close"),
+                            None
+                        )
+                        if close_col is not None:
+                            series = hist[close_col].dropna()
+                            if not series.empty:
+                                price = round(float(series.iloc[-1]), 4)
+                                print(f"[market_data] history() LTP for {yf_ticker}: {price}")
+                                result[original] = price
+                            else:
+                                print(f"[market_data] history() Close series empty for {yf_ticker}")
+                        else:
+                            print(f"[market_data] No Close col in history for {yf_ticker}. cols={list(hist.columns)}")
+                    else:
+                        print(f"[market_data] history() empty DataFrame for {yf_ticker}")
+
+                except Exception as hist_err:
+                    print(f"[market_data] history() also failed for '{yf_ticker}': {hist_err}")
 
     except ImportError:
-        logger.error("yfinance not installed. Run: pip install yfinance")
+        print("[market_data] ERROR: yfinance not installed. Run: pip install yfinance")
+        logger.error("yfinance not installed")
     except Exception as e:
+        print(f"[market_data] FATAL fetch error: {e}")
         logger.error("yfinance fetch error: %s", e, exc_info=True)
 
     fetched = sum(1 for v in result.values() if v is not None)
-    logger.info("LTP fetch: %d/%d symbols resolved", fetched, len(symbols))
+    print(f"[market_data] Final result — {fetched}/{len(symbols)} resolved: {result}")
     return result

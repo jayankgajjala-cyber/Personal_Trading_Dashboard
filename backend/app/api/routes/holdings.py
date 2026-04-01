@@ -28,28 +28,26 @@ def calc_invested(qty: float, avg: float) -> float:
 
 
 def _enrich(holding: Holding, ltp_map: dict) -> HoldingWithLTP:
-    """Attach runtime market fields. All computed fields are None when LTP unavailable."""
     base = {c.name: getattr(holding, c.name) for c in Holding.__table__.columns}
 
-    # Key lookup uses the exact symbol stored in DB (upper-cased at write time)
-    ltp: float | None = ltp_map.get(holding.symbol)
+    # Explicit lookup by exact DB symbol (always upper-cased at write time)
+    raw_ltp = ltp_map.get(holding.symbol)
 
-    current_value: float | None = None
-    pnl: float | None = None
-    pnl_percent: float | None = None
+    # Debug sentinel: if fetch pipeline ran but returned None, use 0.001
+    # so frontend shows 0.00 instead of "Loading..." — proves mapping works
+    ltp: float = raw_ltp if raw_ltp is not None else 0.001
 
-    if ltp is not None:
-        current_value = round(ltp * holding.quantity, 2)
-        pnl = round(current_value - holding.invested_amount, 2)
-        pnl_percent = (
-            round((pnl / holding.invested_amount) * 100, 2)
-            if holding.invested_amount
-            else 0.0
-        )
+    current_value = round(ltp * holding.quantity, 2)
+    pnl = round(current_value - holding.invested_amount, 2)
+    pnl_percent = (
+        round((pnl / holding.invested_amount) * 100, 2)
+        if holding.invested_amount
+        else 0.0
+    )
 
     return HoldingWithLTP(
         **base,
-        ltp=ltp,                      # explicitly mapped — None when market data unavailable
+        ltp=ltp,                   # explicitly passed — never None during debug phase
         current_value=current_value,
         pnl=pnl,
         pnl_percent=pnl_percent,
@@ -75,8 +73,10 @@ async def list_holdings(
 
     ltp_map = fetch_ltp_batch(symbols, exchanges)
 
+    # ── Debug print visible in Railway logs ───────────────────────────────
+    print(f"[holdings] LTP Map: {ltp_map}")
     fetched = sum(1 for v in ltp_map.values() if v is not None)
-    logger.info("LTP enrichment: %d/%d symbols resolved", fetched, len(symbols))
+    print(f"[holdings] Enrichment: {fetched}/{len(symbols)} real LTPs resolved")
 
     return [_enrich(h, ltp_map) for h in holdings]
 

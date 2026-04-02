@@ -86,6 +86,9 @@ async def _verify_otp_db(username: str, otp: str, db: AsyncSession) -> bool:
 async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
     logger.info("Signup attempt for: %s", req.username)
 
+    if not req.password or not req.password.strip():
+        raise HTTPException(status_code=422, detail="Password must not be empty.")
+
     existing = await db.execute(select(User).where(User.username == req.username))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Username already taken.")

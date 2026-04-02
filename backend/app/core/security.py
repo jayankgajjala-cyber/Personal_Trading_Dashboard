@@ -14,13 +14,16 @@ logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# bcrypt hard limit is 72 bytes; truncate to avoid ValueError on long passwords
+_BCRYPT_MAX = 72
+
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return pwd_context.verify(plain[:_BCRYPT_MAX], hashed)
 
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    return pwd_context.hash(password[:_BCRYPT_MAX])
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

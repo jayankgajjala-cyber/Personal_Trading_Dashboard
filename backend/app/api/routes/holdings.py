@@ -1,6 +1,6 @@
 import io
 import logging
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
@@ -17,7 +17,7 @@ from app.schemas.holding import (
     HoldingSellRequest,
     HoldingWithLTP,
 )
-from app.utils.market_data import fetch_ltp_batch
+from app.utils.market_data import fetch_ltp_batch_async
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/holdings", tags=["holdings"])
@@ -28,26 +28,25 @@ def calc_invested(qty: float, avg: float) -> float:
 
 
 def _enrich(holding: Holding, ltp_map: dict) -> HoldingWithLTP:
+    """Attach runtime market fields. Nulls propagate cleanly when LTP unavailable."""
     base = {c.name: getattr(holding, c.name) for c in Holding.__table__.columns}
 
     raw_ltp = ltp_map.get(holding.symbol)
 
-    # Strict guard: treat zero, negative, or None as unavailable
+    # Strict guard: zero, negative, or None → treat as unavailable
     if raw_ltp and raw_ltp > 0:
-        ltp: Optional[float] = round(float(raw_ltp), 4)
+        ltp: Optional[float]           = round(float(raw_ltp), 4)
         current_value: Optional[float] = round(ltp * holding.quantity, 2)
-        pnl: Optional[float] = round(current_value - holding.invested_amount, 2)
-        pnl_percent: Optional[float] = (
+        pnl: Optional[float]           = round(current_value - holding.invested_amount, 2)
+        pnl_percent: Optional[float]   = (
             round((pnl / holding.invested_amount) * 100, 2)
-            if holding.invested_amount
-            else 0.0
+            if holding.invested_amount else 0.0
         )
     else:
-        # LTP unavailable — frontend shows "Loading..." / "—"
-        ltp = None
+        ltp           = None
         current_value = None
-        pnl = None
-        pnl_percent = None
+        pnl           = None
+        pnl_percent   = None
 
     return HoldingWithLTP(
         **base,
@@ -75,11 +74,13 @@ async def list_holdings(
     symbols:   List[str] = [h.symbol   for h in holdings]
     exchanges: List[str] = [h.exchange for h in holdings]
 
-    ltp_map = fetch_ltp_batch(symbols, exchanges)
+    # ── CRITICAL: await the async version so the event loop is never blocked ──
+    ltp_map = await fetch_ltp_batch_async(symbols, exchanges)
 
-    print(f"[holdings] LTP Map: {ltp_map}")
     fetched = sum(1 for v in ltp_map.values() if v is not None)
+    print(f"[holdings] LTP Map: {ltp_map}")
     print(f"[holdings] Enrichment: {fetched}/{len(symbols)} real LTPs resolved")
+    logger.info("LTP enrichment: %d/%d symbols resolved", fetched, len(symbols))
 
     return [_enrich(h, ltp_map) for h in holdings]
 

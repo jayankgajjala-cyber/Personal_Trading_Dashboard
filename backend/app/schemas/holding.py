@@ -3,7 +3,7 @@ from typing import Optional
 from datetime import datetime
 
 
-# ── Auth ─────────────────────────────────────────────────────────────────────
+# ── Auth Schemas ──────────────────────────────────────────────────────────────
 
 class SignupRequest(BaseModel):
     username: str           = Field(..., min_length=3, max_length=50)
@@ -13,7 +13,7 @@ class SignupRequest(BaseModel):
     @field_validator("email", mode="before")
     @classmethod
     def coerce_empty_email_to_none(cls, v: Optional[str]) -> Optional[str]:
-        """Treat empty string / whitespace-only email as None so Pydantic never rejects it."""
+        """Treat empty string / whitespace-only email as None."""
         if v is None:
             return None
         stripped = str(v).strip()
@@ -50,7 +50,7 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
-# ── Holdings ─────────────────────────────────────────────────────────────────
+# ── Holdings Schemas ──────────────────────────────────────────────────────────
 
 class HoldingCreate(BaseModel):
     symbol:            str   = Field(..., min_length=1, max_length=20)
@@ -92,3 +92,18 @@ class HoldingWithLTP(HoldingResponse):
     pnl_percent:   Optional[float] = None
     day_change:    Optional[float] = None
     signal:        Optional[str]   = None
+
+
+# ── Explicit exports (prevents AttributeError on module import) ───────────────
+__all__ = [
+    "SignupRequest",
+    "LoginRequest",
+    "OTPVerifyRequest",
+    "TokenResponse",
+    "UserResponse",
+    "HoldingCreate",
+    "HoldingUpdate",
+    "HoldingSellRequest",
+    "HoldingResponse",
+    "HoldingWithLTP",
+]

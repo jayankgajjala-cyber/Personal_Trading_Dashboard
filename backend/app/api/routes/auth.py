@@ -84,21 +84,17 @@ async def _verify_otp_db(username: str, otp: str, db: AsyncSession) -> bool:
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Register a new user.
-    - Pydantic validator on SignupRequest strips/nullifies empty email upstream.
-    - Password is hashed with bcrypt before storage.
-    """
+    logger.info("Signup attempt for: %s", req.username)
+
     existing = await db.execute(select(User).where(User.username == req.username))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Username already taken.")
 
-    # email is already None or a clean string thanks to the Pydantic validator
-    email = req.email if req.email else None
+    email = req.email or None
 
     user = User(
         username        = req.username,
-        hashed_password = get_password_hash(req.password),   # bcrypt hash
+        hashed_password = get_password_hash(req.password),
         email           = email,
     )
     db.add(user)

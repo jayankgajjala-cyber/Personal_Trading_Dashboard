@@ -31,9 +31,8 @@ OTP_TTL_SECONDS = 300
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db),
+    db:    AsyncSession = Depends(get_db),
 ) -> User:
-    """Decode JWT → look up User row → return User object."""
     payload = decode_token(token)
     if not payload or "sub" not in payload:
         raise HTTPException(
@@ -41,15 +40,13 @@ async def get_current_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    user_id: str = payload["sub"]
     try:
-        uid = uuid_lib.UUID(user_id)
+        uid = uuid_lib.UUID(payload["sub"])
     except ValueError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Malformed token")
 
     result = await db.execute(select(User).where(User.id == uid))
-    user = result.scalar_one_or_none()
+    user   = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
@@ -87,20 +84,27 @@ async def _verify_otp_db(username: str, otp: str, db: AsyncSession) -> bool:
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup(req: SignupRequest, db: AsyncSession = Depends(get_db)):
-    """Register a new user."""
+    """
+    Register a new user.
+    - Pydantic validator on SignupRequest strips/nullifies empty email upstream.
+    - Password is hashed with bcrypt before storage.
+    """
     existing = await db.execute(select(User).where(User.username == req.username))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Username already taken.")
 
+    # email is already None or a clean string thanks to the Pydantic validator
+    email = req.email if req.email else None
+
     user = User(
         username        = req.username,
-        hashed_password = get_password_hash(req.password),
-        email           = req.email,
+        hashed_password = get_password_hash(req.password),   # bcrypt hash
+        email           = email,
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    logger.info("New user registered: %s", req.username)
+    logger.info("New user registered: '%s' (email=%s)", req.username, email)
     return user
 
 
@@ -116,7 +120,7 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not user.email:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="No email registered. Cannot send OTP. Please contact support.",
+            detail="No email registered for this account. Cannot send OTP.",
         )
 
     otp  = await _issue_otp(req.username, db)
@@ -131,7 +135,6 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post("/resend-otp")
 async def resend_otp(req: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """Resend a fresh OTP — re-validates credentials to prevent abuse."""
     result = await db.execute(select(User).where(User.username == req.username))
     user   = result.scalar_one_or_none()
 
@@ -150,7 +153,6 @@ async def resend_otp(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post("/verify-otp", response_model=TokenResponse)
 async def verify_otp_endpoint(req: OTPVerifyRequest, db: AsyncSession = Depends(get_db)):
-    """Step 2: Verify OTP → issue JWT with user UUID as sub."""
     result = await db.execute(select(User).where(User.username == req.username))
     user   = result.scalar_one_or_none()
     if not user:
@@ -159,7 +161,6 @@ async def verify_otp_endpoint(req: OTPVerifyRequest, db: AsyncSession = Depends(
     if not await _verify_otp_db(req.username, req.otp, db):
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
-    # sub = user UUID (not username) — stable across username changes
     token = create_access_token({"sub": str(user.id)})
     return TokenResponse(access_token=token)
 

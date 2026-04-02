@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, UUID4
+from pydantic import BaseModel, Field, UUID4, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -6,9 +6,23 @@ from datetime import datetime
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
 class SignupRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6)
+    username: str           = Field(..., min_length=3, max_length=50)
+    password: str           = Field(..., min_length=6)
     email:    Optional[str] = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def coerce_empty_email_to_none(cls, v: Optional[str]) -> Optional[str]:
+        """Treat empty string / whitespace-only email as None so Pydantic never rejects it."""
+        if v is None:
+            return None
+        stripped = str(v).strip()
+        return stripped if stripped else None
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def strip_username(cls, v: str) -> str:
+        return str(v).strip()
 
 
 class LoginRequest(BaseModel):

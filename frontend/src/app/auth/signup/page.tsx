@@ -11,10 +11,10 @@ export default function SignupPage() {
   const router = useRouter();
 
   const [form, setForm] = useState({ username: "", email: "", password: "", confirm: "" });
-  const [showPw, setShowPw]     = useState(false);
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState("");
-  const [success, setSuccess]   = useState("");
+  const [showPw, setShowPw]   = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState("");
+  const [success, setSuccess] = useState("");
 
   function set(key: string, val: string) {
     setForm((f) => ({ ...f, [key]: val }));
@@ -23,22 +23,34 @@ export default function SignupPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (form.password !== form.confirm) {
+
+    const username = form.username.trim();
+    const email    = form.email.trim();
+    const password = form.password;
+    const confirm  = form.confirm;
+
+    if (username.length < 3) {
+      setError("Username must be at least 3 characters.");
+      return;
+    }
+    if (password !== confirm) {
       setError("Passwords do not match.");
       return;
     }
-    if (form.password.length < 6) {
+    if (password.length < 6) {
       setError("Password must be at least 6 characters.");
       return;
     }
+
     setLoading(true);
     setError("");
+
     try {
-      await authApi.signup(
-        form.username.trim(),
-        form.password,
-        form.email.trim() || undefined,
-      );
+      // email is sent as null (not undefined) so Pydantic receives the key
+      // and the backend validator coerces "" → None cleanly.
+      const emailPayload: string | null = email.length > 0 ? email : null;
+
+      await authApi.signup(username, password, emailPayload);
       setSuccess("Account created! Redirecting to login…");
       setTimeout(() => router.push("/auth/login"), 1500);
     } catch (err: any) {

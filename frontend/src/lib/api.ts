@@ -27,8 +27,14 @@ api.interceptors.response.use(
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export const authApi = {
-  signup: (username: string, password: string, email?: string) =>
-    api.post<UserResponse>("/auth/signup", { username, password, email }),
+  signup: (username: string, password: string, email: string | null) =>
+    // email is always sent explicitly — null tells Pydantic the field is absent,
+    // avoiding a 422 from an undefined key being stripped by JSON.stringify.
+    api.post<UserResponse>("/auth/signup", {
+      username: username.trim(),
+      password,
+      email,           // null | trimmed string — never undefined
+    }),
 
   login: (username: string, password: string) =>
     api.post("/auth/login", { username, password }),

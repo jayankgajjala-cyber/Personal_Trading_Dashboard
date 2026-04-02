@@ -25,16 +25,24 @@ api.interceptors.response.use(
   }
 );
 
+// ── Auth ──────────────────────────────────────────────────────────────────────
 export const authApi = {
+  signup: (username: string, password: string, email?: string) =>
+    api.post<UserResponse>("/auth/signup", { username, password, email }),
+
   login: (username: string, password: string) =>
     api.post("/auth/login", { username, password }),
+
   resendOtp: (username: string, password: string) =>
     api.post("/auth/resend-otp", { username, password }),
+
   verifyOtp: (username: string, otp: string) =>
     api.post<{ access_token: string }>("/auth/verify-otp", { username, otp }),
-  me: () => api.get("/auth/me"),
+
+  me: () => api.get<UserResponse>("/auth/me"),
 };
 
+// ── Holdings ──────────────────────────────────────────────────────────────────
 export const holdingsApi = {
   list: () => api.get<Holding[]>("/holdings"),
   create: (data: CreateHoldingPayload) => api.post<Holding>("/holdings", data),
@@ -52,27 +60,35 @@ export const holdingsApi = {
   },
 };
 
-export interface Holding {
-  id: string;
-  symbol: string;
-  stock_name: string;
-  quantity: number;
-  average_buy_price: number;
-  invested_amount: number;
-  exchange: string;
-  ltp: number | null;
-  current_value: number | null;
-  pnl: number | null;
-  pnl_percent: number | null;
-  signal: string | null;
+// ── Types ─────────────────────────────────────────────────────────────────────
+export interface UserResponse {
+  id:         string;
+  username:   string;
+  email:      string | null;
   created_at: string;
-  updated_at: string;
+}
+
+export interface Holding {
+  id:                string;
+  symbol:            string;
+  stock_name:        string;
+  quantity:          number;
+  average_buy_price: number;
+  invested_amount:   number;
+  exchange:          string;
+  ltp:               number | null;
+  current_value:     number | null;
+  pnl:               number | null;
+  pnl_percent:       number | null;
+  signal:            string | null;
+  created_at:        string;
+  updated_at:        string;
 }
 
 export interface CreateHoldingPayload {
-  symbol: string;
-  stock_name: string;
-  quantity: number;
+  symbol:            string;
+  stock_name:        string;
+  quantity:          number;
   average_buy_price: number;
-  exchange: string;
+  exchange:          string;
 }

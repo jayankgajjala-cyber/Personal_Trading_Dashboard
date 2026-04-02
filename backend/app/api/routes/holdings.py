@@ -10,12 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.routes.auth import get_current_user
 from app.db.session import get_db
 from app.models.holding import Holding
+from app.models.user import User
 from app.schemas.holding import (
-    HoldingCreate,
-    HoldingResponse,
-    HoldingUpdate,
-    HoldingSellRequest,
-    HoldingWithLTP,
+    HoldingCreate, HoldingResponse, HoldingUpdate,
+    HoldingSellRequest, HoldingWithLTP,
 )
 from app.utils.market_data import fetch_ltp_batch_async
 
@@ -28,34 +26,21 @@ def calc_invested(qty: float, avg: float) -> float:
 
 
 def _enrich(holding: Holding, ltp_map: dict) -> HoldingWithLTP:
-    """Attach runtime market fields. Nulls propagate cleanly when LTP unavailable."""
-    base = {c.name: getattr(holding, c.name) for c in Holding.__table__.columns}
-
+    base    = {c.name: getattr(holding, c.name) for c in Holding.__table__.columns}
     raw_ltp = ltp_map.get(holding.symbol)
 
-    # Strict guard: zero, negative, or None → treat as unavailable
     if raw_ltp and raw_ltp > 0:
-        ltp: Optional[float]           = round(float(raw_ltp), 4)
+        ltp:           Optional[float] = round(float(raw_ltp), 4)
         current_value: Optional[float] = round(ltp * holding.quantity, 2)
-        pnl: Optional[float]           = round(current_value - holding.invested_amount, 2)
-        pnl_percent: Optional[float]   = (
-            round((pnl / holding.invested_amount) * 100, 2)
-            if holding.invested_amount else 0.0
+        pnl:           Optional[float] = round(current_value - holding.invested_amount, 2)
+        pnl_percent:   Optional[float] = (
+            round((pnl / holding.invested_amount) * 100, 2) if holding.invested_amount else 0.0
         )
     else:
-        ltp           = None
-        current_value = None
-        pnl           = None
-        pnl_percent   = None
+        ltp = current_value = pnl = pnl_percent = None
 
-    return HoldingWithLTP(
-        **base,
-        ltp=ltp,
-        current_value=current_value,
-        pnl=pnl,
-        pnl_percent=pnl_percent,
-        signal=None,
-    )
+    return HoldingWithLTP(**base, ltp=ltp, current_value=current_value,
+                          pnl=pnl, pnl_percent=pnl_percent, signal=None)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -63,24 +48,24 @@ def _enrich(holding: Holding, ltp_map: dict) -> HoldingWithLTP:
 @router.get("", response_model=List[HoldingWithLTP])
 async def list_holdings(
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Holding).order_by(Holding.symbol))
+    result   = await db.execute(
+        select(Holding)
+        .where(Holding.user_id == current_user.id)
+        .order_by(Holding.symbol)
+    )
     holdings = result.scalars().all()
-
     if not holdings:
         return []
 
-    symbols:   List[str] = [h.symbol   for h in holdings]
-    exchanges: List[str] = [h.exchange for h in holdings]
-
-    # ── CRITICAL: await the async version so the event loop is never blocked ──
-    ltp_map = await fetch_ltp_batch_async(symbols, exchanges)
+    symbols   = [h.symbol   for h in holdings]
+    exchanges = [h.exchange for h in holdings]
+    ltp_map   = await fetch_ltp_batch_async(symbols, exchanges)
 
     fetched = sum(1 for v in ltp_map.values() if v is not None)
     print(f"[holdings] LTP Map: {ltp_map}")
-    print(f"[holdings] Enrichment: {fetched}/{len(symbols)} real LTPs resolved")
-    logger.info("LTP enrichment: %d/%d symbols resolved", fetched, len(symbols))
+    print(f"[holdings] {fetched}/{len(symbols)} LTPs resolved for user {current_user.id}")
 
     return [_enrich(h, ltp_map) for h in holdings]
 
@@ -89,21 +74,25 @@ async def list_holdings(
 async def create_holding(
     body: HoldingCreate,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     existing = await db.execute(
-        select(Holding).where(Holding.symbol == body.symbol.upper())
+        select(Holding).where(
+            Holding.symbol  == body.symbol.upper(),
+            Holding.user_id == current_user.id,
+        )
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Symbol {body.symbol} already exists.")
 
     holding = Holding(
-        symbol=body.symbol.upper(),
-        stock_name=body.stock_name,
-        quantity=body.quantity,
-        average_buy_price=body.average_buy_price,
-        invested_amount=calc_invested(body.quantity, body.average_buy_price),
-        exchange=body.exchange.upper(),
+        user_id           = current_user.id,
+        symbol            = body.symbol.upper(),
+        stock_name        = body.stock_name,
+        quantity          = body.quantity,
+        average_buy_price = body.average_buy_price,
+        invested_amount   = calc_invested(body.quantity, body.average_buy_price),
+        exchange          = body.exchange.upper(),
     )
     db.add(holding)
     await db.commit()
@@ -116,9 +105,14 @@ async def add_shares(
     symbol: str,
     body: HoldingUpdate,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Holding).where(Holding.symbol == symbol.upper()))
+    result = await db.execute(
+        select(Holding).where(
+            Holding.symbol  == symbol.upper(),
+            Holding.user_id == current_user.id,
+        )
+    )
     holding = result.scalar_one_or_none()
     if not holding:
         raise HTTPException(status_code=404, detail="Symbol not found")
@@ -129,9 +123,9 @@ async def add_shares(
         + (body.additional_quantity * body.buy_price)
     ) / new_qty
 
-    holding.quantity = round(new_qty, 4)
+    holding.quantity          = round(new_qty, 4)
     holding.average_buy_price = round(new_avg, 4)
-    holding.invested_amount = calc_invested(holding.quantity, holding.average_buy_price)
+    holding.invested_amount   = calc_invested(holding.quantity, holding.average_buy_price)
     await db.commit()
     await db.refresh(holding)
     return holding
@@ -142,9 +136,14 @@ async def sell_shares(
     symbol: str,
     body: HoldingSellRequest,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Holding).where(Holding.symbol == symbol.upper()))
+    result = await db.execute(
+        select(Holding).where(
+            Holding.symbol  == symbol.upper(),
+            Holding.user_id == current_user.id,
+        )
+    )
     holding = result.scalar_one_or_none()
     if not holding:
         raise HTTPException(status_code=404, detail="Symbol not found")
@@ -161,7 +160,7 @@ async def sell_shares(
         await db.commit()
         return {"message": f"{symbol.upper()} fully sold and removed.", "removed": True}
 
-    holding.quantity = new_qty
+    holding.quantity        = new_qty
     holding.invested_amount = calc_invested(new_qty, holding.average_buy_price)
     await db.commit()
     await db.refresh(holding)
@@ -172,9 +171,14 @@ async def sell_shares(
 async def delete_holding(
     symbol: str,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Holding).where(Holding.symbol == symbol.upper()))
+    result = await db.execute(
+        select(Holding).where(
+            Holding.symbol  == symbol.upper(),
+            Holding.user_id == current_user.id,
+        )
+    )
     holding = result.scalar_one_or_none()
     if not holding:
         raise HTTPException(status_code=404, detail="Symbol not found")
@@ -186,7 +190,7 @@ async def delete_holding(
 async def upload_zerodha_csv(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files accepted")
@@ -209,7 +213,8 @@ async def upload_zerodha_csv(
     df = df.dropna(subset=["symbol", "average_buy_price", "quantity"])
     df["symbol"] = df["symbol"].str.strip().str.upper()
 
-    await db.execute(delete(Holding))
+    # Replace only THIS user's holdings
+    await db.execute(delete(Holding).where(Holding.user_id == current_user.id))
 
     added = 0
     for _, row in df.iterrows():
@@ -217,12 +222,13 @@ async def upload_zerodha_csv(
         qty = float(row["quantity"])
         avg = float(row["average_buy_price"])
         db.add(Holding(
-            symbol=sym,
-            stock_name=sym,
-            quantity=round(qty, 4),
-            average_buy_price=round(avg, 4),
-            invested_amount=calc_invested(qty, avg),
-            exchange="NSE",
+            user_id           = current_user.id,
+            symbol            = sym,
+            stock_name        = sym,
+            quantity          = round(qty, 4),
+            average_buy_price = round(avg, 4),
+            invested_amount   = calc_invested(qty, avg),
+            exchange          = "NSE",
         ))
         added += 1
 

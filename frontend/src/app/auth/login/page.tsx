@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import Cookies from "js-cookie";
 import { authApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -11,15 +12,15 @@ type Step = "credentials" | "otp";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [step, setStep] = useState<Step>("credentials");
+  const [step, setStep]         = useState<Step>("credentials");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [otp, setOtp] = useState("");
-  const [showPw, setShowPw] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [otp, setOtp]           = useState("");
+  const [showPw, setShowPw]     = useState(false);
+  const [loading, setLoading]   = useState(false);
   const [resending, setResending] = useState(false);
   const [resendMsg, setResendMsg] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError]       = useState("");
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -67,7 +68,6 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center relative overflow-hidden">
-      {/* Background grid */}
       <div className="absolute inset-0 scanline opacity-40" />
       <div
         className="absolute inset-0 opacity-[0.03]"
@@ -77,7 +77,6 @@ export default function LoginPage() {
           backgroundSize: "40px 40px",
         }}
       />
-      {/* Glow */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
 
       <div className="relative z-10 w-full max-w-sm px-4 animate-fade-in">
@@ -116,7 +115,7 @@ export default function LoginPage() {
                     required
                     autoFocus
                     autoComplete="off"
-                    className="w-full bg-input border border-border rounded-md px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 transition"
+                    className={inputCls}
                   />
                 </div>
                 <div className="space-y-1">
@@ -129,8 +128,8 @@ export default function LoginPage() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
-                      className="w-full bg-input border border-border rounded-md px-3 py-2 pr-10 text-sm font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 transition"
                       placeholder="••••••••"
+                      className={cn(inputCls, "pr-10")}
                     />
                     <button
                       type="button"
@@ -156,6 +155,13 @@ export default function LoginPage() {
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                   {loading ? "Sending OTP…" : "Continue"}
                 </button>
+
+                <p className="text-center text-xs text-muted-foreground font-mono pt-1">
+                  No account?{" "}
+                  <Link href="/auth/signup" className="text-cyan-400 hover:text-cyan-300 transition">
+                    Create one
+                  </Link>
+                </p>
               </form>
             </>
           ) : (
@@ -179,8 +185,8 @@ export default function LoginPage() {
                     required
                     autoFocus
                     maxLength={6}
-                    className="w-full bg-input border border-border rounded-md px-3 py-2 text-sm font-mono text-foreground text-center tracking-[0.5em] placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 transition text-lg"
                     placeholder="000000"
+                    className="w-full bg-input border border-border rounded-md px-3 py-2 text-sm font-mono text-foreground text-center tracking-[0.5em] placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 transition text-lg"
                   />
                 </div>
 
@@ -189,7 +195,6 @@ export default function LoginPage() {
                     {resendMsg}
                   </p>
                 )}
-
                 {error && (
                   <p className="text-rose-400 text-xs font-mono bg-rose-500/10 border border-rose-500/20 rounded px-3 py-2">
                     {error}
@@ -235,3 +240,6 @@ export default function LoginPage() {
     </div>
   );
 }
+
+const inputCls =
+  "w-full bg-input border border-border rounded-md px-3 py-2 text-sm font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cyan-500 focus:border-cyan-500 transition";

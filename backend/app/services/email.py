@@ -2,13 +2,13 @@ import resend
 from app.core.config import settings
 
 
-def send_otp_email(otp: str) -> bool:
-    """Send OTP to the configured owner email via Resend."""
+def send_otp_email(otp: str, to_email: str) -> bool:
+    """Send OTP to the specified email address via Resend."""
     resend.api_key = settings.RESEND_API_KEY
     try:
         params = {
             "from": settings.OTP_FROM_EMAIL,
-            "to": [settings.OTP_TO_EMAIL],
+            "to":   [to_email],
             "subject": "Quantedge Login OTP",
             "html": f"""
             <div style="font-family:monospace;background:#0a0a0a;color:#e5e5e5;padding:32px;border-radius:8px;max-width:400px;">
@@ -26,5 +26,5 @@ def send_otp_email(otp: str) -> bool:
         resend.Emails.send(params)
         return True
     except Exception as e:
-        print(f"[Resend] Failed to send OTP: {e}")
+        print(f"[Resend] Failed to send OTP to {to_email}: {e}")
         return False

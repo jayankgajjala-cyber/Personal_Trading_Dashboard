@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.session import engine, Base
 from app.api.routes import auth, holdings
-from app.models import holding  # noqa: F401 - ensure model is registered
+import app.models  # noqa: F401 — triggers models/__init__.py, registers all ORM classes with Base
 
 
 @asynccontextmanager

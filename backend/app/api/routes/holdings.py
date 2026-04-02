@@ -1,6 +1,6 @@
 import io
 import logging
-from typing import List, Optional
+from typing import List
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
@@ -11,10 +11,11 @@ from app.api.routes.auth import get_current_user
 from app.db.session import get_db
 from app.models.holding import Holding
 from app.models.user import User
-from app.schemas.holding import (
-    HoldingCreate, HoldingResponse, HoldingUpdate,
-    HoldingSellRequest, HoldingWithLTP,
-)
+from app.schemas.holding import HoldingCreate
+from app.schemas.holding import HoldingResponse
+from app.schemas.holding import HoldingUpdate
+from app.schemas.holding import HoldingSellRequest
+from app.schemas.holding import HoldingWithLTP
 from app.utils.market_data import fetch_ltp_batch_async
 
 logger = logging.getLogger(__name__)
@@ -26,21 +27,33 @@ def calc_invested(qty: float, avg: float) -> float:
 
 
 def _enrich(holding: Holding, ltp_map: dict) -> HoldingWithLTP:
-    base    = {c.name: getattr(holding, c.name) for c in Holding.__table__.columns}
-    raw_ltp = ltp_map.get(holding.symbol)
+    base = {c.name: getattr(holding, c.name) for c in Holding.__table__.columns}
 
-    if raw_ltp and raw_ltp > 0:
-        ltp:           Optional[float] = round(float(raw_ltp), 4)
-        current_value: Optional[float] = round(ltp * holding.quantity, 2)
-        pnl:           Optional[float] = round(current_value - holding.invested_amount, 2)
-        pnl_percent:   Optional[float] = (
-            round((pnl / holding.invested_amount) * 100, 2) if holding.invested_amount else 0.0
-        )
-    else:
-        ltp = current_value = pnl = pnl_percent = None
+    # Explicit 0.0 fallback — never returns None so frontend exits "Loading" loop.
+    # Tries exact symbol key first, then upper-cased, to handle any case drift.
+    raw_ltp: float = (
+        ltp_map.get(holding.symbol)
+        or ltp_map.get(holding.symbol.upper(), 0.0)
+        or 0.0
+    )
 
-    return HoldingWithLTP(**base, ltp=ltp, current_value=current_value,
-                          pnl=pnl, pnl_percent=pnl_percent, signal=None)
+    ltp: float           = round(float(raw_ltp), 4)
+    current_value: float = round(ltp * holding.quantity, 2)          if ltp > 0 else 0.0
+    pnl: float           = round(current_value - holding.invested_amount, 2) if ltp > 0 else 0.0
+    pnl_percent: float   = (
+        round((pnl / holding.invested_amount) * 100, 2)
+        if ltp > 0 and holding.invested_amount
+        else 0.0
+    )
+
+    return HoldingWithLTP(
+        **base,
+        ltp=ltp,
+        current_value=current_value,
+        pnl=pnl,
+        pnl_percent=pnl_percent,
+        signal=None,
+    )
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -50,23 +63,31 @@ async def list_holdings(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    result   = await db.execute(
-        select(Holding)
-        .where(Holding.user_id == current_user.id)
-        .order_by(Holding.symbol)
-    )
-    holdings = result.scalars().all()
+    try:
+        result   = await db.execute(
+            select(Holding)
+            .where(Holding.user_id == current_user.id)
+            .order_by(Holding.symbol)
+        )
+        holdings = result.scalars().all()
+    except Exception as e:
+        logger.error("DB fetch failed for user %s: %s", current_user.id, e)
+        raise HTTPException(status_code=503, detail="Database unavailable — please retry.")
+
     if not holdings:
         return []
 
     symbols   = [h.symbol   for h in holdings]
     exchanges = [h.exchange for h in holdings]
-    ltp_map   = await fetch_ltp_batch_async(symbols, exchanges)
 
-    fetched = sum(1 for v in ltp_map.values() if v is not None)
-    print(f"[holdings] LTP Map: {ltp_map}")
-    print(f"[holdings] {fetched}/{len(symbols)} LTPs resolved for user {current_user.id}")
+    # LTP fetch — always returns float (0.0 on full miss), never raises
+    try:
+        ltp_map = await fetch_ltp_batch_async(symbols, exchanges)
+    except Exception as e:
+        logger.error("LTP batch failed: %s", e)
+        ltp_map = {s: 0.0 for s in symbols}
 
+    logger.info("[holdings] LTP resolved for user %s: %s", current_user.id, ltp_map)
     return [_enrich(h, ltp_map) for h in holdings]
 
 

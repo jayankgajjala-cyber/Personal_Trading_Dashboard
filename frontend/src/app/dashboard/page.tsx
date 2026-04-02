@@ -88,7 +88,7 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground/50 mr-1">
             <Zap className="w-2.5 h-2.5 text-cyan-500/60" />
-            10s
+            15s+j
           </div>
           <button
             onClick={refetch}
@@ -271,11 +271,16 @@ function HoldingRow({
         {fmtCurrency(h.average_buy_price, h.exchange)}
       </td>
 
-      {/* LTP — explicit h.ltp read; "Loading..." when null */}
+      {/* LTP:
+            null        → "Fetching..." (backend hasn't responded yet)
+            0 / 0.0     → "0.00" (backend responded but price unavailable — pipe confirmed open)
+            > 0         → formatted currency                                                    */}
       <td className="px-3 py-2 text-right font-mono tabular-nums">
-        {h.ltp != null
-          ? <span className="text-foreground font-medium">{fmtCurrency(h.ltp, h.exchange)}</span>
-          : <span className="text-muted-foreground/40 text-[10px] animate-pulse">Loading...</span>
+        {h.ltp === null || h.ltp === undefined
+          ? <span className="text-muted-foreground/40 text-[10px] animate-pulse">Fetching...</span>
+          : h.ltp > 0
+            ? <span className="text-foreground font-medium">{fmtCurrency(h.ltp, h.exchange)}</span>
+            : <span className="text-muted-foreground/50 text-[10px]">{fmtCurrency(0, h.exchange)}</span>
         }
       </td>
 

@@ -6,6 +6,7 @@ passlib[bcrypt]==1.7.4
 python-multipart==0.0.9
 pydantic==2.7.1
 pydantic-settings==2.3.0
+typing-extensions==4.12.2
 sqlalchemy==2.0.30
 asyncpg==0.29.0
 alembic==1.13.1

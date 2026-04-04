@@ -23,7 +23,8 @@ import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, TypedDict
+from typing import Dict, List, Optional
+from typing_extensions import TypedDict
 
 logger = logging.getLogger(__name__)
 

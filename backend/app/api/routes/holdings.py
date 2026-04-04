@@ -27,20 +27,29 @@ def calc_invested(qty: float, avg: float) -> float:
 
 
 def _enrich(holding: Holding, ltp_map: dict) -> HoldingWithLTP:
+    """
+    ltp_map values are LTPResult dicts: {"price": float, "source": str}
+    Falls back to {"price": 0.0, "source": "Failed"} on any miss.
+    """
     base = {c.name: getattr(holding, c.name) for c in Holding.__table__.columns}
 
-    # Explicit 0.0 fallback — never returns None so frontend exits "Loading" loop.
-    # Tries exact symbol key first, then upper-cased, to handle any case drift.
-    raw_ltp: float = (
+    raw = (
         ltp_map.get(holding.symbol)
-        or ltp_map.get(holding.symbol.upper(), 0.0)
-        or 0.0
+        or ltp_map.get(holding.symbol.upper())
+        or {"price": 0.0, "source": "Failed"}
     )
 
-    ltp: float           = round(float(raw_ltp), 4)
-    current_value: float = round(ltp * holding.quantity, 2)          if ltp > 0 else 0.0
-    pnl: float           = round(current_value - holding.invested_amount, 2) if ltp > 0 else 0.0
-    pnl_percent: float   = (
+    # Accept both the new dict format and legacy plain-float format
+    if isinstance(raw, dict):
+        ltp    = round(float(raw.get("price", 0.0)), 4)
+        source = raw.get("source", "Failed")
+    else:
+        ltp    = round(float(raw), 4)
+        source = "Unknown"
+
+    current_value: float = round(ltp * holding.quantity, 2)           if ltp > 0 else 0.0
+    pnl:           float = round(current_value - holding.invested_amount, 2) if ltp > 0 else 0.0
+    pnl_percent:   float = (
         round((pnl / holding.invested_amount) * 100, 2)
         if ltp > 0 and holding.invested_amount
         else 0.0
@@ -53,6 +62,7 @@ def _enrich(holding: Holding, ltp_map: dict) -> HoldingWithLTP:
         pnl=pnl,
         pnl_percent=pnl_percent,
         signal=None,
+        ltp_source=source,
     )
 
 

@@ -115,7 +115,12 @@ export default function DashboardPage() {
       </header>
 
       {/* ── Table ── */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto relative">
+        {/* Optimistic refresh indicator — table stays visible, subtle top bar pulses */}
+        {loading && holdings.length > 0 && (
+          <div className="absolute top-0 left-0 right-0 h-0.5 bg-cyan-500/40 animate-pulse z-20" />
+        )}
+
         {error && (
           <div className="m-4 bg-rose-500/10 border border-rose-500/20 rounded-md px-4 py-3 text-rose-400 text-xs font-mono">
             {error}
@@ -141,7 +146,7 @@ export default function DashboardPage() {
                   { key: null,                label: "Curr Value", align: "right" },
                   { key: null,                label: "P&L",        align: "right" },
                   { key: null,                label: "P&L %",      align: "right" },
-                  { key: null,                label: "Signal",     align: "center" },
+                  { key: null,                label: "Source",     align: "center" },
                   { key: null,                label: "",           align: "right" },
                 ].map(({ key, label, align }, i) => (
                   <th
@@ -322,16 +327,9 @@ function HoldingRow({
         }
       </td>
 
-      {/* Signal */}
+      {/* Source — colored badge showing which data tier provided the price */}
       <td className="px-3 py-2 text-center">
-        {h.signal
-          ? <span className="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded px-1.5 py-0.5 text-[10px] font-mono">
-              {h.signal}
-            </span>
-          : <span className="inline-flex items-center gap-0.5 text-muted-foreground/30 text-[10px] font-mono">
-              <Cpu className="w-2.5 h-2.5" /><span>—</span>
-            </span>
-        }
+        <SourceBadge source={h.ltp_source} />
       </td>
 
       {/* Actions */}
@@ -352,6 +350,32 @@ function HoldingRow({
         </div>
       </td>
     </tr>
+  );
+}
+
+// ── Source badge ──────────────────────────────────────────────────────────────
+
+const SOURCE_STYLES: Record<string, string> = {
+  Finnhub:  "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+  NSE:      "bg-blue-500/10    text-blue-400    border-blue-500/20",
+  Google:   "bg-violet-500/10  text-violet-400  border-violet-500/20",
+  yfinance: "bg-amber-500/10   text-amber-400   border-amber-500/20",
+  Failed:   "bg-rose-500/10    text-rose-400    border-rose-500/20",
+};
+
+function SourceBadge({ source }: { source: string | null }) {
+  if (!source || source === "Failed") {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-muted-foreground/30 text-[10px] font-mono">
+        <Cpu className="w-2.5 h-2.5" /><span>—</span>
+      </span>
+    );
+  }
+  const cls = SOURCE_STYLES[source] ?? "bg-muted/40 text-muted-foreground border-border";
+  return (
+    <span className={cn("border rounded px-1.5 py-0.5 text-[10px] font-mono tracking-wide", cls)}>
+      {source}
+    </span>
   );
 }
 

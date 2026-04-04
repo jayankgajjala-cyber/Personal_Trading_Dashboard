@@ -27,12 +27,13 @@ api.interceptors.response.use(
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 export const authApi = {
-  signup: (username: string, password: string, email: string | null | undefined) =>
+  signup: (username: string, password: string, email: string | null) =>
+    // email is always sent explicitly — null tells Pydantic the field is absent,
+    // avoiding a 422 from an undefined key being stripped by JSON.stringify.
     api.post<UserResponse>("/auth/signup", {
       username: username.trim(),
       password,
-      // Coerce empty string → null so Pydantic validator receives null, never ""
-      email: email && email.trim() !== "" ? email.trim() : null,
+      email,           // null | trimmed string — never undefined
     }),
 
   login: (username: string, password: string) =>
@@ -86,6 +87,7 @@ export interface Holding {
   pnl:               number | null;
   pnl_percent:       number | null;
   signal:            string | null;
+  ltp_source:        string | null;   // "Finnhub" | "NSE" | "Google" | "yfinance" | "Failed"
   created_at:        string;
   updated_at:        string;
 }

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.db.session import engine, Base
 from app.api.routes import auth, holdings
+from app.api.routes.global_routes import router as global_router
 import app.models  # noqa: F401 — triggers models/__init__.py, registers all ORM classes with Base
 
 
@@ -40,6 +41,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(holdings.router)
+app.include_router(global_router)
 
 
 @app.get("/health", tags=["health"])

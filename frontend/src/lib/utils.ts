@@ -15,12 +15,19 @@ export function fmt(n: number | null | undefined, decimals = 2) {
 
 export function fmtCurrency(n: number | null | undefined, exchange = "NSE") {
   if (n == null) return "—";
-  const isUS = exchange === "US";
-  const prefix = isUS ? "$" : "₹";
-  return prefix + n.toLocaleString(isUS ? "en-US" : "en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const ex = (exchange ?? "NSE").toUpperCase();
+  // Determine prefix and locale by exchange region
+  if (ex === "US" || ex === "CRYPTO") {
+    return "$" + (n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  if (ex === "EUR") {
+    return "€" + (n).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  if (ex === "GBP") {
+    return "£" + (n).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  // Default: Indian exchanges (NSE, BSE) → ₹
+  return "₹" + (n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function fmtPct(n: number | null | undefined) {
@@ -29,9 +36,12 @@ export function fmtPct(n: number | null | undefined) {
   return sign + fmt(n) + "%";
 }
 
+// fmtCompact always uses ₹ — portfolio totals are always INR
 export function fmtCompact(n: number | null | undefined) {
   if (n == null) return "—";
-  if (Math.abs(n) >= 1_00_00_000) return "₹" + (n / 1_00_00_000).toFixed(2) + " Cr";
-  if (Math.abs(n) >= 1_00_000) return "₹" + (n / 1_00_000).toFixed(2) + " L";
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (abs >= 1_00_00_000) return sign + "₹" + (abs / 1_00_00_000).toFixed(2) + " Cr";
+  if (abs >= 1_00_000)    return sign + "₹" + (abs / 1_00_000).toFixed(2) + " L";
   return "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 }

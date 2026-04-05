@@ -21,7 +21,40 @@ interface MacroQuote {
   cached:     boolean;
 }
 
-// ── Macro ticker hook ─────────────────────────────────────────────────────────
+// ── Per-symbol currency prefix map ────────────────────────────────────────────
+// Keyed by the Finnhub symbol returned from /global/macro
+const SYMBOL_CURRENCY: Record<string, { prefix: string; locale: string; decimals: number }> = {
+  // US ETFs — USD
+  SPY:  { prefix: "$",  locale: "en-US", decimals: 2 },
+  QQQ:  { prefix: "$",  locale: "en-US", decimals: 2 },
+  DIA:  { prefix: "$",  locale: "en-US", decimals: 2 },
+  VIXY: { prefix: "$",  locale: "en-US", decimals: 2 },
+  IEF:  { prefix: "$",  locale: "en-US", decimals: 2 },
+  UUP:  { prefix: "$",  locale: "en-US", decimals: 3 },  // DXY proxy — show 3dp
+  USO:  { prefix: "$",  locale: "en-US", decimals: 2 },
+  GLD:  { prefix: "$",  locale: "en-US", decimals: 2 },
+  // Indian equities (if added)
+  NIFTY:  { prefix: "₹", locale: "en-IN", decimals: 2 },
+  SENSEX: { prefix: "₹", locale: "en-IN", decimals: 2 },
+  // Eurozone (if added)
+  EZU:  { prefix: "€",  locale: "de-DE", decimals: 2 },
+  // UK (if added)
+  EWU:  { prefix: "£",  locale: "en-GB", decimals: 2 },
+};
+
+function fmtMacroPrice(symbol: string, price: number): string {
+  if (!price || price <= 0) return "—";
+  const cfg = SYMBOL_CURRENCY[symbol] ?? { prefix: "$", locale: "en-US", decimals: 2 };
+  return (
+    cfg.prefix +
+    price.toLocaleString(cfg.locale, {
+      minimumFractionDigits: cfg.decimals,
+      maximumFractionDigits: cfg.decimals,
+    })
+  );
+}
+
+// ── Macro ticker data hook ────────────────────────────────────────────────────
 function useMacroTicker() {
   const [quotes, setQuotes] = useState<MacroQuote[]>([]);
 
@@ -45,52 +78,54 @@ function useMacroTicker() {
 }
 
 // ── MacroTicker component ─────────────────────────────────────────────────────
-const HIDDEN_PATHS = ["/settings", "/diagnostics"];
+// Visible on ALL dashboard/* and news/* routes — no HIDDEN_PATHS exclusion.
+// To hide on a specific route, add its prefix to this array:
+const TICKER_HIDDEN_ON: string[] = [];  // e.g. ["/settings", "/diagnostics"]
 
 function MacroTicker({ quotes }: { quotes: MacroQuote[] }) {
-  const pathname  = usePathname();
-  const trackRef  = useRef<HTMLDivElement>(null);
+  const pathname = usePathname();
 
-  if (HIDDEN_PATHS.some(p => pathname?.startsWith(p))) return null;
+  if (TICKER_HIDDEN_ON.some(p => pathname?.startsWith(p))) return null;
   if (!quotes.length) return null;
 
-  // Duplicate items so the scroll loop is seamless
-  const items = [...quotes, ...quotes];
+  const items = [...quotes, ...quotes];   // duplicate for seamless loop
 
   return (
     <div className="w-full h-7 bg-card/80 border-b border-border overflow-hidden flex items-center relative shrink-0">
-      {/* Left fade */}
+      {/* Edge fades */}
       <div className="absolute left-0 top-0 h-full w-8 bg-gradient-to-r from-card/80 to-transparent z-10 pointer-events-none" />
-      {/* Right fade */}
       <div className="absolute right-0 top-0 h-full w-8 bg-gradient-to-l from-card/80 to-transparent z-10 pointer-events-none" />
 
       <div
-        ref={trackRef}
         className="flex items-center gap-0 animate-ticker whitespace-nowrap"
         style={{ willChange: "transform" }}
       >
         {items.map((q, i) => {
           const up  = q.pct_change > 0;
           const dn  = q.pct_change < 0;
-          const neu = q.pct_change === 0;
           return (
             <span
               key={`${q.symbol}-${i}`}
               className="inline-flex items-center gap-1.5 px-4 border-r border-border/40 h-7"
             >
-              <span className="text-[10px] font-mono font-semibold text-foreground/70 tracking-wide">
+              {/* Label */}
+              <span className="text-[10px] font-mono font-semibold text-foreground/60 tracking-wide">
                 {q.label}
               </span>
+
+              {/* Price with dynamic currency prefix */}
               <span className="text-[10px] font-mono tabular-nums text-foreground">
-                {q.price > 0 ? q.price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"}
+                {fmtMacroPrice(q.symbol, q.price)}
               </span>
+
+              {/* % change */}
               {q.price > 0 && (
                 <span
                   className={cn(
                     "text-[10px] font-mono tabular-nums",
-                    up  && "text-emerald-400",
-                    dn  && "text-rose-400",
-                    neu && "text-muted-foreground/50",
+                    up  ? "text-emerald-400"
+                    : dn ? "text-rose-400"
+                    :      "text-muted-foreground/50",
                   )}
                 >
                   {up ? "+" : ""}{q.pct_change.toFixed(2)}%
@@ -104,11 +139,11 @@ function MacroTicker({ quotes }: { quotes: MacroQuote[] }) {
   );
 }
 
-// ── Dashboard layout ──────────────────────────────────────────────────────────
+// ── DashboardLayout ───────────────────────────────────────────────────────────
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const router   = useRouter();
-  const pathname = usePathname();
-  const quotes   = useMacroTicker();
+  const router    = useRouter();
+  const pathname  = usePathname();
+  const quotes    = useMacroTicker();
   const [collapsed, setCollapsed] = useState(true);
 
   useEffect(() => {
@@ -121,6 +156,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.push("/auth/login");
   }
 
+  // All top-level app sections — use Next.js <Link> for SPA transitions
   const navItems = [
     { href: "/dashboard", icon: LayoutDashboard, label: "Portfolio" },
     { href: "/news",      icon: Newspaper,       label: "News"      },
@@ -128,17 +164,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-screen bg-background flex overflow-hidden">
-      {/* Sidebar */}
+
+      {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       <aside
         className={cn(
-          "fixed top-0 left-0 h-screen z-20 border-r border-border flex flex-col items-center py-4 gap-1 bg-card/50 transition-all duration-200",
+          "fixed top-0 left-0 h-screen z-20 border-r border-border",
+          "flex flex-col items-center py-4 gap-1 bg-card/50 transition-all duration-200",
           collapsed ? "w-14" : "w-44",
         )}
       >
+        {/* Logo */}
         <div className="w-8 h-8 bg-cyan-500/10 border border-cyan-500/30 rounded-md flex items-center justify-center mb-4 flex-shrink-0">
           <TrendingUp className="w-4 h-4 text-cyan-400" />
         </div>
 
+        {/* Nav links — <Link> ensures SPA behaviour, no full-page reload */}
         {navItems.map(({ href, icon: Icon, label }) => (
           <Link
             key={href}
@@ -147,18 +187,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             className={cn(
               "h-9 rounded-md flex items-center gap-2 px-2.5 transition w-full",
               collapsed ? "justify-center" : "justify-start",
-              pathname === href
+              pathname === href || pathname?.startsWith(href + "/")
                 ? "bg-cyan-500/10 text-cyan-400"
                 : "text-muted-foreground hover:text-foreground hover:bg-muted",
             )}
           >
             <Icon className="w-4 h-4 flex-shrink-0" />
-            {!collapsed && <span className="text-xs font-mono whitespace-nowrap">{label}</span>}
+            {!collapsed && (
+              <span className="text-xs font-mono whitespace-nowrap">{label}</span>
+            )}
           </Link>
         ))}
 
         <div className="flex-1" />
 
+        {/* Collapse toggle */}
         <button
           onClick={() => setCollapsed(c => !c)}
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -174,11 +217,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </button>
 
+        {/* Logout */}
         <button
           onClick={logout}
           title="Logout"
           className={cn(
-            "h-9 w-full rounded-md flex items-center gap-2 px-2.5 text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition",
+            "h-9 w-full rounded-md flex items-center gap-2 px-2.5",
+            "text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition",
             collapsed ? "justify-center" : "justify-start",
           )}
         >
@@ -187,14 +232,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </button>
       </aside>
 
-      {/* Main area — ticker + page content stacked vertically */}
+      {/* ── Main area — ticker always on top, children below ────────────── */}
       <main
         className={cn(
           "flex-1 flex flex-col overflow-hidden transition-all duration-200",
           collapsed ? "ml-14" : "ml-44",
         )}
       >
+        {/* Macro ticker — visible for ALL routes under this layout */}
         <MacroTicker quotes={quotes} />
+
+        {/* Page content — dashboard/page.tsx or news/page.tsx */}
         {children}
       </main>
     </div>

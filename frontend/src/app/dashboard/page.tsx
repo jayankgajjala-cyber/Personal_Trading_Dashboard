@@ -78,7 +78,7 @@ export default function DashboardPage() {
           <Stat
             icon={pnlPositive ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
             label="Total P&L"
-            value={ltpReady ? `${pnlPositive ? "+" : ""}${fmtCompact(totalPnl)} (${fmtPct(totalPnlPct)})` : "—"}
+            value={ltpReady ? `${pnlPositive ? "+" : ""}${fmtCompact(Math.abs(totalPnl))} (${fmtPct(totalPnlPct)})` : "—"}
             color={ltpReady ? (pnlPositive ? "text-emerald-400" : "text-rose-400") : undefined}
           />
           <Stat icon={<Activity className="w-3.5 h-3.5" />} label="Positions" value={String(holdings.length)} />
@@ -211,7 +211,7 @@ export default function DashboardPage() {
                   </td>
                   <td className={cn("px-3 py-2.5 text-right font-mono font-semibold tabular-nums",
                     ltpReady ? (totalPnl >= 0 ? "text-emerald-400" : "text-rose-400") : "text-muted-foreground/40")}>
-                    {ltpReady ? `${totalPnl >= 0 ? "+" : ""}${fmtCompact(totalPnl)}` : "—"}
+                    {ltpReady ? (totalPnl >= 0 ? "+" : "") + fmtCompact(Math.abs(totalPnl)) : "—"}
                   </td>
                   <td className={cn("px-3 py-2.5 text-right font-mono font-semibold tabular-nums",
                     ltpReady ? (totalPnlPct >= 0 ? "text-emerald-400" : "text-rose-400") : "text-muted-foreground/40")}>

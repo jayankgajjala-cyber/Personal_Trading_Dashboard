@@ -6,6 +6,8 @@ from app.core.config import settings
 from app.db.session import engine, Base
 from app.api.routes import auth, holdings
 from app.api.routes.global_routes import router as global_router
+from app.api.routes.news_routes import router as news_router
+from app.services.news_service import start_news_loop, stop_news_loop
 import app.models  # noqa: F401 — triggers models/__init__.py, registers all ORM classes with Base
 
 
@@ -15,7 +17,9 @@ async def lifespan(app: FastAPI):
     # The statement_cache_size=0 fix should be applied in app/db/session.py
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    start_news_loop()
     yield
+    stop_news_loop()
     await engine.dispose()
 
 
@@ -42,6 +46,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(holdings.router)
 app.include_router(global_router)
+app.include_router(news_router)
 
 
 @app.get("/health", tags=["health"])

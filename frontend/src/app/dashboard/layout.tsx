@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Cookies from "js-cookie";
 import {
   TrendingUp, LayoutDashboard, LogOut,
-  ChevronRight, ChevronLeft,
+  ChevronRight, ChevronLeft, Newspaper,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -123,6 +123,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const navItems = [
     { href: "/dashboard", icon: LayoutDashboard, label: "Portfolio" },
+    { href: "/news",      icon: Newspaper,       label: "News"      },
   ];
 
   return (

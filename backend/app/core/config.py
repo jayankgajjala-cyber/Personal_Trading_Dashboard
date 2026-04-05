@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     SUPABASE_URL:      str
     SUPABASE_ANON_KEY: str
 
+    # MongoDB (News Engine)
+    MONGODB_URI:  str = "mongodb://localhost:27017"
+
+    # External API keys
+    FINNHUB_API_KEY: str = ""
+    GNEWS_API_KEY:   str = ""
+
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:3000"
 

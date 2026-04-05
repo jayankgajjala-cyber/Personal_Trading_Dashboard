@@ -1,2 +1,6 @@
 venv/
 .venv/
+backend/.env.template
+backend/.env
+frontend/.env.local.template
+frontend/.env.local

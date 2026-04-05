@@ -34,14 +34,14 @@ CACHE_TTL_S     = 600   # 10 minutes
 # ── Instruments ───────────────────────────────────────────────────────────────
 # (finnhub_symbol, display_label)
 MACRO_INSTRUMENTS: List[tuple[str, str]] = [
-    ("SPY",   "S&P 500"),
-    ("QQQ",   "NASDAQ"),
-    ("DIA",   "Dow Jones"),
-    ("^VIX",  "VIX"),
-    ("^TNX",  "US 10Y"),
-    ("DXY",   "Dollar"),
-    ("CL=F",  "Crude Oil"),
-    ("GC=F",  "Gold"),
+    ("SPY",  "S&P 500"),    # SPDR S&P 500 ETF
+    ("QQQ",  "NASDAQ"),     # Invesco QQQ
+    ("DIA",  "Dow Jones"),  # SPDR Dow Jones ETF
+    ("VIXY", "VIX"),        # ProShares VIX ETF  (^VIX blocked on free tier)
+    ("IEF",  "US 10Y"),     # iShares 7-10Y Treasury  (^TNX blocked)
+    ("UUP",  "Dollar"),     # Invesco DB Dollar Index  (DXY blocked)
+    ("USO",  "Crude Oil"),  # United States Oil Fund   (CL=F blocked)
+    ("GLD",  "Gold"),       # SPDR Gold Shares         (GC=F blocked)
 ]
 
 # ── Types ─────────────────────────────────────────────────────────────────────

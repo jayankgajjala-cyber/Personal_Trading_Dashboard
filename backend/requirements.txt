@@ -19,3 +19,6 @@ finnhub-python==2.4.20
 nsepython==2.8
 beautifulsoup4==4.12.3
 aiohttp==3.9.5
+motor==3.4.0
+pymongo==4.7.3
+feedparser==6.0.11

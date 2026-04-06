@@ -213,7 +213,8 @@ async def _upsert_items(items: List[dict]) -> tuple[int, int]:
     }
     _sentiment_fields = {
         "sentiment_score", "sentiment_label", "confidence", "confidence_pct",
-        "action", "reasoning", "event_type", "primary_stocks", "secondary_stocks",
+        "action", "reasoning", "event_type", "weight_profile",
+        "primary_stocks", "secondary_stocks",
         "sectors", "source_reliability", "time_decay", "finbert_score",
         "finbert_prob", "vader_score", "macro_score", "macro_confidence",
     }

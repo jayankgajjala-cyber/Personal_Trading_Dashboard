@@ -1,11 +1,20 @@
 """
-app/services/sentiment_engine.py — Weighted Hybrid Sentiment Engine
-=====================================================================
+app/services/sentiment_engine.py — Dynamic Hybrid Sentiment Engine
+===================================================================
 
 PIPELINE
-  1. FinBERT (50%)     — financial-domain transformer sentiment
-  2. Macro Context (30%) — structured DB signals (RBI, inflation, global indices)
-  3. VADER (20%)       — headline polarity baseline
+  FinBERT + VADER + Macro Context, weights selected dynamically per article
+  via WEIGHTING_PROFILES keyed on section / event_type.
+
+WEIGHTING PROFILES
+  corporate   {finbert:0.7, macro:0.1, vader:0.2}  Earnings, M&A
+  macro_heavy {finbert:0.2, macro:0.7, vader:0.1}  macro_impact section / RBI / Fed / Inflation
+  commodity   {finbert:0.3, macro:0.5, vader:0.2}  Oil, Gold, Metals sector
+  default     {finbert:0.4, macro:0.3, vader:0.3}  all other cases
+
+THRESHOLDS
+  Buy  ≥ +0.15  |  Sell ≤ -0.15  |  Hold otherwise
+  Confidence gate: < 0.40 → Hold regardless of score
 
 FEATURES
   • Time-decay applied per article (exponential, half-life = 12h)
@@ -13,7 +22,7 @@ FEATURES
   • Entity extraction → primary/secondary stocks (NSE/BSE) + sectors
   • Event classification → Earnings | Regulation | Macro | M&A | Fraud/Negative
   • Confidence score = f(FinBERT prob, macro confidence, source reliability)
-  • Actionable output: Buy / Sell / Hold + reasoning string
+  • FinBERT device resolved from TORCH_DEVICE env var (default: cpu)
   • Async batch processing — DB-safe, non-blocking
 """
 
@@ -28,11 +37,65 @@ import math
 
 logger = logging.getLogger(__name__)
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+# ── Dynamic Weighting Profiles ────────────────────────────────────────────────
 
-FINBERT_WEIGHT   = 0.50
-MACRO_WEIGHT     = 0.30
-VADER_WEIGHT     = 0.20
+class _WeightProfile:
+    __slots__ = ("finbert", "macro", "vader", "name")
+
+    def __init__(self, name: str, finbert: float, macro: float, vader: float) -> None:
+        assert abs(finbert + macro + vader - 1.0) < 1e-6, "Weights must sum to 1.0"
+        self.name    = name
+        self.finbert = finbert
+        self.macro   = macro
+        self.vader   = vader
+
+
+WEIGHTING_PROFILES: Dict[str, _WeightProfile] = {
+    # High FinBERT trust for company-specific language
+    "corporate":   _WeightProfile("corporate",   finbert=0.7, macro=0.1, vader=0.2),
+    # Macro signals dominate when the story is about policy / indices
+    "macro_heavy": _WeightProfile("macro_heavy", finbert=0.2, macro=0.7, vader=0.1),
+    # Commodities: macro context matters more than corporate language
+    "commodity":   _WeightProfile("commodity",   finbert=0.3, macro=0.5, vader=0.2),
+    # Balanced baseline
+    "default":     _WeightProfile("default",     finbert=0.4, macro=0.3, vader=0.3),
+}
+
+# section → profile name
+_SECTION_PROFILE: Dict[str, str] = {
+    "macro_impact":  "macro_heavy",
+    "global_market": "macro_heavy",
+    "indian_market": "default",
+    "swing_signals": "corporate",
+}
+
+# event_type → profile name  (event wins over section when both apply)
+_EVENT_PROFILE: Dict[str, str] = {
+    "Earnings":       "corporate",
+    "M&A":            "corporate",
+    "Regulation":     "macro_heavy",
+    "Macro":          "macro_heavy",
+    "Fraud/Negative": "corporate",   # FinBERT excels at detecting negative corporate tone
+    "General":        "default",
+}
+
+# Commodity sector tag triggers commodity profile (overrides section, loses to event)
+_COMMODITY_SECTORS = {"Energy", "Metals"}
+
+
+def _resolve_profile(section: str, event_type: str, sectors: List[str]) -> _WeightProfile:
+    """
+    Priority order (highest → lowest):
+      1. event_type  (most specific signal)
+      2. commodity sector detection
+      3. section
+      4. default
+    """
+    if event_type in _EVENT_PROFILE and event_type != "General":
+        return WEIGHTING_PROFILES[_EVENT_PROFILE[event_type]]
+    if any(s in _COMMODITY_SECTORS for s in sectors):
+        return WEIGHTING_PROFILES["commodity"]
+    return WEIGHTING_PROFILES.get(_SECTION_PROFILE.get(section, "default"), WEIGHTING_PROFILES["default"])
 
 DECAY_HALF_LIFE_H = 12.0          # exponential half-life in hours
 
@@ -219,19 +282,35 @@ async def _get_finbert():
         if _finbert_pipeline is not None:
             return _finbert_pipeline
         try:
+            import os
             import torch  # noqa
             from transformers import pipeline  # type: ignore
-            logger.info("[sentiment] Loading FinBERT…")
+
+            # Honour TORCH_DEVICE env var; fall back to cpu
+            _torch_device = os.getenv("TORCH_DEVICE", "cpu").strip().lower()
+            # Translate string device to int index for pipeline(device=)
+            if _torch_device == "cpu":
+                _device_arg = -1
+            elif _torch_device.startswith("cuda"):
+                # e.g. "cuda:0" → 0, "cuda" → 0
+                try:
+                    _device_arg = int(_torch_device.split(":")[-1]) if ":" in _torch_device else 0
+                except ValueError:
+                    _device_arg = 0
+            else:
+                _device_arg = -1   # unrecognised → safe CPU fallback
+
+            logger.info("[sentiment] Loading FinBERT on device=%s (arg=%s)…", _torch_device, _device_arg)
             _finbert_pipeline = pipeline(
                 "text-classification",
                 model="ProsusAI/finbert",
                 tokenizer="ProsusAI/finbert",
                 top_k=None,
-                device=-1,              # CPU
+                device=_device_arg,
                 truncation=True,
                 max_length=512,
             )
-            logger.info("[sentiment] FinBERT ready")
+            logger.info("[sentiment] FinBERT ready (device=%s)", _torch_device)
         except Exception as e:
             logger.warning("[sentiment] FinBERT unavailable (%s) — using VADER-only fallback", e)
             _finbert_pipeline = None
@@ -457,8 +536,8 @@ def _label_from_score(score: float) -> str:
 def _action_from_score(score: float, confidence: float) -> str:
     if confidence < 0.40:
         return "Hold"
-    if score >  0.30: return "Buy"
-    if score < -0.30: return "Sell"
+    if score >=  0.15: return "Buy"
+    if score <= -0.15: return "Sell"
     return "Hold"
 
 
@@ -471,6 +550,7 @@ def _build_reasoning(
     source_rel:    float,
     decay:         float,
     sectors:       List[str],
+    profile_name:  str = "default",
 ) -> str:
     parts: List[str] = []
 
@@ -492,6 +572,7 @@ def _build_reasoning(
 
     tier = "T1" if source_rel >= 1.0 else ("T2" if source_rel >= 0.7 else "Unk")
     parts.append(f"Source: {tier}")
+    parts.append(f"Profile: {profile_name}")
 
     return " | ".join(parts)
 
@@ -501,9 +582,12 @@ async def score_article(
     summary:      str,
     source:       str,
     published_at: datetime,
+    section:      str = "indian_market",
 ) -> Dict:
     """
-    Core scoring function. Returns full enriched sentiment payload.
+    Core scoring function. Resolves weight profile dynamically from
+    section + event_type + sectors, then computes composite score.
+    Returns full enriched sentiment payload.
     """
     text = f"{title}. {summary}"
 
@@ -514,29 +598,30 @@ async def score_article(
         _get_macro_signal(),
     )
 
-    # Time decay
-    decay = _time_decay(published_at)
-
-    # Source reliability
+    # Time decay + source reliability
+    decay      = _time_decay(published_at)
     source_rel = _source_reliability(source)
 
-    # Event type → weight multiplier
-    event_type      = _classify_event(text)
-    event_multiplier = EVENT_WEIGHT_MULTIPLIER.get(event_type, 1.0)
+    # Event + entity classification (needed before profile resolution)
+    event_type                            = _classify_event(text)
+    primary_stocks, secondary_stocks, sectors = _extract_entities(text)
 
-    # Weighted composite before decay
+    # ── Dynamic weight resolution ─────────────────────────────────────────────
+    profile        = _resolve_profile(section, event_type, sectors)
+    event_mult     = EVENT_WEIGHT_MULTIPLIER.get(event_type, 1.0)
+
+    # Weighted composite
     composite = (
-        FINBERT_WEIGHT * finbert_raw +
-        VADER_WEIGHT   * vader_raw   +
-        MACRO_WEIGHT   * macro_raw
+        profile.finbert * finbert_raw +
+        profile.vader   * vader_raw   +
+        profile.macro   * macro_raw
     )
 
     # Apply source reliability scaling and event multiplier
-    composite = composite * source_rel * event_multiplier
+    composite = composite * source_rel * event_mult
 
-    # Apply time decay (softens signal for old articles)
+    # Apply time decay
     composite = composite * decay
-
     composite = _normalize(composite)
 
     # Confidence score
@@ -546,34 +631,32 @@ async def score_article(
         (source_rel   * 0.2)
     )
 
-    # Entity extraction
-    primary_stocks, secondary_stocks, sectors = _extract_entities(text)
-
     sentiment_label = _label_from_score(composite)
     action          = _action_from_score(composite, confidence)
     reasoning       = _build_reasoning(
         finbert_raw, vader_raw, macro_raw, macro_conf,
-        event_type, source_rel, decay, sectors,
+        event_type, source_rel, decay, sectors, profile.name,
     )
 
     return {
-        "sentiment_score":   round(composite,   4),
-        "sentiment_label":   sentiment_label,
-        "confidence":        round(confidence,  4),
-        "confidence_pct":    round(confidence * 100, 1),
-        "action":            action,
-        "reasoning":         reasoning,
-        "event_type":        event_type,
-        "primary_stocks":    primary_stocks,
-        "secondary_stocks":  secondary_stocks,
-        "sectors":           sectors,
-        "source_reliability":source_rel,
-        "time_decay":        round(decay, 4),
-        "finbert_score":     round(finbert_raw, 4),
-        "finbert_prob":      round(finbert_prob, 4),
-        "vader_score":       round(vader_raw,   4),
-        "macro_score":       round(macro_raw,   4),
-        "macro_confidence":  round(macro_conf,  4),
+        "sentiment_score":    round(composite,    4),
+        "sentiment_label":    sentiment_label,
+        "confidence":         round(confidence,   4),
+        "confidence_pct":     round(confidence * 100, 1),
+        "action":             action,
+        "reasoning":          reasoning,
+        "event_type":         event_type,
+        "weight_profile":     profile.name,
+        "primary_stocks":     primary_stocks,
+        "secondary_stocks":   secondary_stocks,
+        "sectors":            sectors,
+        "source_reliability": source_rel,
+        "time_decay":         round(decay,        4),
+        "finbert_score":      round(finbert_raw,  4),
+        "finbert_prob":       round(finbert_prob, 4),
+        "vader_score":        round(vader_raw,    4),
+        "macro_score":        round(macro_raw,    4),
+        "macro_confidence":   round(macro_conf,   4),
     }
 
 
@@ -598,6 +681,7 @@ async def enrich_batch(articles: List[Dict]) -> List[Dict]:
                 summary      = a.get("summary", ""),
                 source       = a.get("source", ""),
                 published_at = a.get("published_at", datetime.now(timezone.utc)),
+                section      = a.get("section", "indian_market"),
             )
             for a in chunk
         ]
@@ -620,6 +704,7 @@ async def enrich_batch(articles: List[Dict]) -> List[Dict]:
                         "action":          "Hold",
                         "reasoning":       "Scoring error — defaulting to neutral",
                         "event_type":      "General",
+                        "weight_profile":  "default",
                         "primary_stocks":  [],
                         "secondary_stocks": [],
                         "sectors":         [],

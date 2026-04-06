@@ -8,6 +8,7 @@ from app.api.routes import auth, holdings
 from app.api.routes.global_routes import router as global_router
 from app.api.routes.news_routes import router as news_router
 from app.services.news_service import start_news_loop, stop_news_loop
+from app.services.sentiment_engine import ensure_macro_signals
 import app.models  # noqa: F401 — triggers models/__init__.py, registers all ORM classes with Base
 
 
@@ -17,6 +18,7 @@ async def lifespan(app: FastAPI):
     # The statement_cache_size=0 fix should be applied in app/db/session.py
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await ensure_macro_signals()
     start_news_loop()
     yield
     stop_news_loop()
